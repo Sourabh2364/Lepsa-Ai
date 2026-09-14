@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LEPSA AI</title>
+<link rel="stylesheet" href="style.css?v=5">
+
+
+
+  </head>
+
+<body>
+
+<div class="app" id="app">
+
+    <!-- SIDEBAR BACKDROP -->
+    <div class="sidebar-overlay" id="sidebarOverlay" onclick="toggleMobileSidebar()"></div>
+
+        <!-- CINEMATIC LEPSA SIDEBAR -->
+    <aside class="sidebar" id="mainSidebar">
+        <!-- Ambient Light Bar -->
+        <div class="sidebar-edge-glow"></div>
+
+        <!-- Top Brand Area -->
+        <div class="brand">
+            <div class="brand-orb-wrap">
+                <div class="brand-orb"></div>
+                <div class="brand-ring ring-cyan"></div>
+                <div class="brand-ring ring-purple"></div>
+            </div>
+            <div class="brand-details">
+                <div class="brand-name">LEPSA <span class="brand-ai">AI</span></div>
+                <span class="brand-badge">PRO CORE</span>
+            </div>
+        </div>
+
+                 <!-- LEPSA AI SMART CORE SELECTOR -->
+        <div class="core-mode-card">
+            <div class="mode-header">
+                <span class="mode-pulse-dot"></span>
+                <span class="mode-title">ENGINE MODE</span>
+                <span class="mode-active-pill">ACTIVE</span>
+            </div>
+            
+            <div class="mode-switch-group">
+                <button type="button" class="mode-chip active" onclick="switchEngine('fast', this)">
+                    <span class="chip-icon">⚡</span>
+                    <span class="chip-label">Fast Core</span>
+                </button>
+                <button type="button" class="mode-chip" onclick="switchEngine('pro', this)">
+                    <span class="chip-icon">🧠</span>
+                    <span class="chip-label">Deep Think</span>
+                </button>
+            </div>
+        </div>
+        
+
+        <!-- Menu Section 1 -->
+        <div class="menu-title">Workspace</div>
+        <div class="menu-item active">
+            <span class="menu-icon-box cyan-icon">💬</span>
+            <div class="menu-text-box">
+                <strong>Recent Chats</strong>
+                <small>Active thread</small>
+            </div>
+        </div>
+
+        <div class="menu-item">
+            <span class="menu-icon-box purple-icon">🧠</span>
+            <div class="menu-text-box">
+                <strong>AI Memory</strong>
+                <small>Context engine</small>
+            </div>
+        </div>
+
+        <div class="menu-item">
+            <span class="menu-icon-box pink-icon">📁</span>
+            <div class="menu-text-box">
+                <strong>Files & Vault</strong>
+                <small>Stored media</small>
+            </div>
+        </div>
+
+        <!-- Menu Section 2 -->
+        <div class="menu-title">Account</div>
+        <div class="menu-item logout-item" onclick="logoutDemo()">
+            <span class="menu-icon-box danger-icon">🚪</span>
+            <div class="menu-text-box">
+                <strong>Logout</strong>
+                <small>End session</small>
+            </div>
+        </div>
+
+        <!-- Futuristic Glowing User Card -->
+        <div class="profile">
+            <div class="avatar-ring">
+                <div class="avatar" id="profileAvatar">U</div>
+                <div class="live-status-dot"></div>
+            </div>
+            <div class="profile-meta">
+                <div class="profile-name" id="profileName">User</div>
+                <div class="profile-status">Quantum Link Active</div>
+            </div>
+        </div>
+    </aside>
+    
+
+    <!-- CHAT CONTAINER -->
+    <main class="chat-container">
+
+        <!-- HEADER -->
+        <div class="header">
+            <button type="button" class="lepsa-drawer-btn" onclick="toggleMobileSidebar()" title="Menu">
+                <span></span>
+                <span></span>
+                <span></span>
+            </button>
+
+            <div class="ai-orb"></div>
+
+            <div class="header-info">
+                <div class="title">LEPSA AI</div>
+                <div class="status">● Online</div>
+            </div>
+
+            <button type="button" class="lepsa-quick-new" onclick="newChat()" title="New Chat">＋</button>
+
+            <div class="lepsa-menu-wrap">
+                <button class="lepsa-menu-btn" id="lepsaMenuButton" type="button">
+                    <span class="lepsa-dots">
+                        <span></span>
+                        <span></span>
+                        <span></span>
+                    </span>
+                </button>
+
+                <div class="lepsa-dropdown" id="lepsaDropdown">
+                    <button class="lepsa-menu-item" onclick="newChat()" type="button">✨ New Chat</button>
+                    <button class="lepsa-menu-item" id="lepsaShareBtn" type="button">↗ Share</button>
+                    <button class="lepsa-menu-item" id="lepsaInstallBtn" type="button">⌂ Add to home</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- MESSAGES -->
+        <div class="messages" id="messages">
+            <div class="message bot">
+                Hello! 👋<br><br>
+                I'm <strong>LEPSA AI</strong>, your intelligent AI assistant.<br><br>
+                How can I help you today?
+            </div>
+        </div>
+
+                <!-- CHATGPT / GEMINI STYLE FLOATING CAPSULE BAR -->
+        <div class="input-area">
+            <div class="input-pill-wrapper">
+                <!-- Inner Left Plus Button -->
+                <div class="lepsa-plus-wrap">
+                    <button type="button" class="lepsa-dynamic-plus" id="lepsaPlusBtn" onclick="toggleLEPSAPlus(event)" title="Add attachment">
+                        <span class="plus-core">＋</span>
+                    </button>
+
+                    <!-- Popup Attachment Menu -->
+                    <div class="lepsa-glass-menu" id="lepsaAttachPopup">
+                        <button type="button" class="glass-menu-item" onclick="triggerCamera()">
+                            <div class="menu-icon-disc">
+                                <svg class="attach-svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"></path>
+                                    <circle cx="12" cy="13" r="3"></circle>
+                                </svg>
+                            </div>
+                            <span class="menu-item-title">Camera</span>
+                        </button>
+                        <button type="button" class="glass-menu-item" onclick="triggerGallery()">
+                            <div class="menu-icon-disc">
+                                <svg class="attach-svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                                    <circle cx="8.5" cy="8.5" r="1.5"></circle>
+                                    <polyline points="21 15 16 10 5 21"></polyline>
+                                </svg>
+                            </div>
+                            <span class="menu-item-title">Photos</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Hidden Inputs -->
+                <input type="file" id="cameraInput" accept="image/*" capture="environment" style="display:none;" onchange="handleImageSelected(this)">
+                <input type="file" id="galleryInput" accept="image/*" style="display:none;" onchange="handleImageSelected(this)">
+
+                <!-- Center Text Field -->
+                <input type="text" id="messageInput" placeholder="Ask LEPSA anything...">
+
+                <!-- Inner Speech Recognition Mic -->
+                <button type="button" class="pill-inline-mic" onclick="startVoice()" title="Speech to text">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"></path>
+                        <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+                        <line x1="12" y1="19" x2="12" y2="23"></line>
+                        <line x1="8" y1="23" x2="16" y2="23"></line>
+                    </svg>
+                </button>
+            </div>
+
+            <!-- Outer Right Live / Send Orb Button (With Clean Gap) -->
+            <button class="pill-outer-btn" id="mainActionButton" onclick="handleMainAction()" title="LEPSA Live">
+                <span class="lepsa-voice-orb" id="actionOrbIcon">
+                    <span class="voice-core"></span>
+                </span>
+                <span class="send-icon-svg" id="actionSendIcon" style="display:none;">➤</span>
+            </button>
+        </div>
+        
+  
+              
+ 
+
+    </main>
+
+</div>
+
+    <!-- REAL GEMINI-STYLE LIVE VOICE MODAL -->
+<div id="lepsaVoiceModal" class="gemini-live-overlay" style="display:none;">
+    
+    <!-- Screen Corner Neon Flow Stream (Chaaron kone par chalne wali light) -->
+    <div class="gemini-edge-stream"></div>
+    <div class="gemini-edge-glow"></div>
+
+    <!-- Top Controls -->
+    <div class="live-top-bar">
+        <div class="live-mode-tag">
+            <span class="live-dot"></span>
+            <span>LEPSA LIVE</span>
+        </div>
+        <button type="button" class="live-close-btn" onclick="closeVoiceMode()" title="Exit">✕</button>
+    </div>
+
+    <!-- Center Fluid Plasma Liquid Core -->
+    <div class="gemini-core-stage">
+        <div class="plasma-aura-halo"></div>
+        <div class="plasma-fluid-orb" id="modalVoiceOrb">
+            <div class="plasma-blob blob-1"></div>
+            <div class="plasma-blob blob-2"></div>
+            <div class="plasma-blob blob-3"></div>
+            <div class="plasma-core-glow"></div>
+        </div>
+        <div class="live-status-pill" id="voiceStatusText">Listening...</div>
+    </div>
+
+    <!-- Live Floating Subtitle Box -->
+    <div class="live-transcript-card" id="voiceLiveText">
+        Listening to your voice...
+    </div>
+
+    <!-- Bottom End Session Button -->
+    <div class="live-bottom-bar">
+        <button type="button" class="end-live-btn" onclick="closeVoiceMode()">
+            <span>✕</span> End Session
+        </button>
+    </div>
+</div>
+
+
+<!-- ===================================================
+     SCRIPTS
+=================================================== -->
+<script>
+function toggleMobileSidebar() {
+    const sidebar = document.getElementById("mainSidebar");
+    const overlay = document.getElementById("sidebarOverlay");
+    if (sidebar && overlay) {
+        sidebar.classList.toggle("open");
+        overlay.classList.toggle("active");
+    }
+}
+
+function toggleLEPSAPlus(e) {
+    e.stopPropagation();
+    const popup = document.getElementById("lepsaAttachPopup");
+    if (popup) popup.classList.toggle("show");
+}
+
+function triggerCamera() {
+    closeLEPSAPopup();
+    document.getElementById("cameraInput").click();
+}
+
+function triggerGallery() {
+    closeLEPSAPopup();
+    document.getElementById("galleryInput").click();
+}
+
+function closeLEPSAPopup() {
+    const popup = document.getElementById("lepsaAttachPopup");
+    if (popup) popup.classList.remove("show");
+}
+
+document.addEventListener("click", function (e) {
+    if (!e.target.closest(".lepsa-plus-wrap")) closeLEPSAPopup();
+    const dropdown = document.getElementById("lepsaDropdown");
+    if (!e.target.closest(".lepsa-menu-wrap") && dropdown) dropdown.classList.remove("show");
+});
+
+function handleImageSelected(input) {
+     if (input.files && input.files[0]) {
+        const file = input.files[0];
+        const msg = document.getElementById("messageInput");
+        msg.value = "Attached Image: " + file.name;
+        msg.focus();
+    }
+}
+
+// Three-dot toggle
+document.getElementById("lepsaMenuButton")?.addEventListener("click", function(e) {
+    e.stopPropagation();
+    document.getElementById("lepsaDropdown")?.classList.toggle("show");
+});
+
+async function logoutDemo() {
+    try {
+        await fetch("auth.php", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({action: "logout"})
+        });
+    } catch (e) {}
+    sessionStorage.clear();
+    window.location.href = "login.html";
+}
+</script>
+
+<script src="script.js"></script>
+
+</body>
+</html>

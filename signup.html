@@ -1,0 +1,1774 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+
+<meta name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+
+<title>Create Account — LEPSA AI</title>
+
+<style>
+
+/* =====================================================
+   RESET
+===================================================== */
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+html,
+body {
+    width: 100%;
+    min-height: 100%;
+}
+
+body {
+    min-height: 100vh;
+
+    background: #05090b;
+    color: #ffffff;
+
+    font-family:
+        Arial,
+        Helvetica,
+        sans-serif;
+
+    overflow-x: hidden;
+}
+
+
+/* =====================================================
+   BACKGROUND GLOW
+===================================================== */
+
+body::before {
+    content: "";
+
+    position: fixed;
+
+    width: 650px;
+    height: 650px;
+
+    top: -300px;
+    left: -250px;
+
+    border-radius: 50%;
+
+    background:
+        radial-gradient(
+            circle,
+            rgba(0,229,255,0.10),
+            transparent 68%
+        );
+
+    pointer-events: none;
+}
+
+body::after {
+    content: "";
+
+    position: fixed;
+
+    width: 600px;
+    height: 600px;
+
+    right: -300px;
+    bottom: -300px;
+
+    border-radius: 50%;
+
+    background:
+        radial-gradient(
+            circle,
+            rgba(0,229,255,0.08),
+            transparent 68%
+        );
+
+    pointer-events: none;
+}
+
+
+/* =====================================================
+   PAGE
+===================================================== */
+
+.page {
+    width: 100%;
+    min-height: 100vh;
+
+    display: flex;
+
+    align-items: center;
+    justify-content: center;
+
+    padding: 35px;
+}
+
+
+/* =====================================================
+   MAIN WRAPPER
+===================================================== */
+
+.signup-wrapper {
+    width: 100%;
+    max-width: 1180px;
+
+    min-height: 700px;
+
+    display: grid;
+
+    grid-template-columns:
+        1.05fr 0.95fr;
+
+    background: #080d10;
+
+    border:
+        1px solid rgba(150,180,185,0.25);
+
+    border-radius: 30px;
+
+    overflow: hidden;
+
+    position: relative;
+
+    box-shadow:
+        0 30px 100px rgba(0,0,0,0.65),
+        0 0 70px rgba(0,220,255,0.06);
+}
+
+
+/* =====================================================
+   LEFT BRAND PANEL
+===================================================== */
+
+.brand-panel {
+    position: relative;
+
+    padding: 55px;
+
+    display: flex;
+    flex-direction: column;
+
+    justify-content: space-between;
+
+    border-right:
+        1px solid rgba(150,180,185,0.16);
+
+    overflow: hidden;
+}
+
+
+/* cyan wave */
+
+.brand-panel::before {
+    content: "";
+
+    position: absolute;
+
+    width: 700px;
+    height: 300px;
+
+    left: -140px;
+    bottom: 55px;
+
+    border-top:
+        1px solid rgba(0,229,255,0.17);
+
+    border-radius: 50%;
+
+    transform: rotate(-12deg);
+
+    box-shadow:
+        0 -25px 0 rgba(0,229,255,0.06),
+        0 -50px 0 rgba(0,229,255,0.04),
+        0 -75px 0 rgba(0,229,255,0.025);
+
+    pointer-events: none;
+}
+
+
+/* =====================================================
+   TOP
+===================================================== */
+
+.brand-top {
+    position: relative;
+    z-index: 2;
+}
+
+.mini-label {
+    color: #849195;
+
+    font-size: 11px;
+
+    letter-spacing: 5px;
+
+    margin-bottom: 13px;
+}
+
+
+/* =====================================================
+   LOGO
+===================================================== */
+
+.logo-area {
+    display: flex;
+
+    align-items: center;
+
+    gap: 15px;
+}
+
+.logo-orb {
+    width: 58px;
+    height: 58px;
+
+    position: relative;
+
+    border-radius: 50%;
+
+    background:
+        radial-gradient(
+            circle at 35% 30%,
+            #ffffff 0%,
+            #b9faff 8%,
+            #17383e 42%,
+            #061114 72%
+        );
+
+    border:
+        1px solid rgba(0,238,255,0.65);
+
+    box-shadow:
+        0 0 18px rgba(0,229,255,0.5),
+        inset 0 0 20px rgba(0,229,255,0.18);
+}
+
+
+/* ring */
+
+.logo-orb::before {
+    content: "";
+
+    position: absolute;
+
+    width: 76px;
+    height: 25px;
+
+    left: -10px;
+    top: 17px;
+
+    border:
+        2px solid #00e5ff;
+
+    border-radius: 50%;
+
+    transform: rotate(-18deg);
+
+    opacity: 0.85;
+}
+
+
+/* letter */
+
+.logo-letter {
+    position: absolute;
+
+    inset: 0;
+
+    display: flex;
+
+    align-items: center;
+    justify-content: center;
+
+    color: #ffffff;
+
+    font-size: 30px;
+
+    font-weight: 900;
+
+    text-shadow:
+        0 0 12px #00e5ff;
+}
+
+
+/* =====================================================
+   BRAND NAME
+===================================================== */
+
+.brand-name {
+    font-size: 27px;
+
+    font-weight: 800;
+
+    letter-spacing: 5px;
+}
+
+.brand-name span {
+    color: #00e5ff;
+
+    text-shadow:
+        0 0 12px rgba(0,229,255,0.6);
+}
+
+
+/* =====================================================
+   BRAND CONTENT
+===================================================== */
+
+.brand-content {
+    position: relative;
+
+    z-index: 2;
+
+    max-width: 500px;
+}
+
+.brand-line {
+    width: 55px;
+    height: 3px;
+
+    background: #00e5ff;
+
+    margin-bottom: 22px;
+
+    box-shadow:
+        0 0 12px rgba(0,229,255,0.7);
+}
+
+.brand-content h1 {
+    font-size: clamp(40px,5vw,65px);
+
+    line-height: 0.98;
+
+    letter-spacing: -2px;
+
+    margin-bottom: 25px;
+}
+
+.brand-content h1 span {
+    color: #00e5ff;
+
+    text-shadow:
+        0 0 20px rgba(0,229,255,0.35);
+}
+
+.brand-content p {
+    color: #879397;
+
+    font-size: 15px;
+
+    line-height: 1.8;
+
+    max-width: 450px;
+}
+
+
+/* =====================================================
+   FEATURES
+===================================================== */
+
+.features {
+    position: relative;
+
+    z-index: 2;
+
+    display: grid;
+
+    grid-template-columns:
+        repeat(3,1fr);
+
+    gap: 14px;
+
+    margin-top: 40px;
+}
+
+.feature {
+    padding: 18px;
+
+    border:
+        1px solid rgba(150,180,185,0.16);
+
+    border-radius: 15px;
+
+    background:
+        rgba(255,255,255,0.015);
+
+    transition: 0.25s;
+}
+
+.feature:hover {
+    border-color:
+        rgba(0,229,255,0.5);
+
+    transform:
+        translateY(-3px);
+}
+
+.feature-icon {
+    color: #00e5ff;
+
+    font-size: 21px;
+
+    margin-bottom: 12px;
+
+    text-shadow:
+        0 0 10px rgba(0,229,255,0.5);
+}
+
+.feature strong {
+    display: block;
+
+    font-size: 14px;
+
+    margin-bottom: 7px;
+}
+
+.feature span {
+    display: block;
+
+    color: #718084;
+
+    font-size: 11px;
+
+    line-height: 1.5;
+}
+
+
+/* =====================================================
+   RIGHT SIGNUP PANEL
+===================================================== */
+
+.signup-panel {
+    padding: 48px 55px;
+
+    display: flex;
+
+    align-items: center;
+    justify-content: center;
+
+    background:
+        linear-gradient(
+            145deg,
+            #0a1013,
+            #060a0c
+        );
+}
+
+
+/* =====================================================
+   SIGNUP CARD
+===================================================== */
+
+.signup-card {
+    width: 100%;
+
+    max-width: 430px;
+}
+
+
+/* =====================================================
+   HEADER
+===================================================== */
+
+.signup-logo {
+    width: 42px;
+    height: 42px;
+
+    display: flex;
+
+    align-items: center;
+    justify-content: center;
+
+    margin-bottom: 20px;
+
+    border-radius: 13px;
+
+    border:
+        1px solid rgba(0,229,255,0.55);
+
+    background: #0b1518;
+
+    color: #00e5ff;
+
+    font-size: 21px;
+
+    font-weight: 900;
+
+    box-shadow:
+        0 0 18px rgba(0,229,255,0.12);
+}
+
+.signup-card h2 {
+    font-size: 34px;
+
+    letter-spacing: -1px;
+
+    margin-bottom: 8px;
+}
+
+.subtitle {
+    color: #778489;
+
+    font-size: 13px;
+
+    line-height: 1.5;
+
+    margin-bottom: 25px;
+}
+
+
+/* =====================================================
+   FORM
+===================================================== */
+
+.form-group {
+    margin-bottom: 15px;
+}
+
+.form-group label {
+    display: block;
+
+    color: #dce5e7;
+
+    font-size: 12px;
+
+    margin-bottom: 8px;
+}
+
+.input-wrap {
+    position: relative;
+}
+
+.input-wrap input {
+    width: 100%;
+    height: 50px;
+
+    padding:
+        0 47px 0 16px;
+
+    border-radius: 14px;
+
+    border:
+        1px solid rgba(150,180,185,0.22);
+
+    background: #080d0f;
+
+    color: #ffffff;
+
+    outline: none;
+
+    font-size: 13px;
+
+    transition: 0.25s;
+}
+
+.input-wrap input::placeholder {
+    color: #58666a;
+}
+
+.input-wrap input:focus {
+    border-color:
+        rgba(0,229,255,0.7);
+
+    box-shadow:
+        0 0 0 3px rgba(0,229,255,0.06);
+}
+
+.input-icon {
+    position: absolute;
+
+    right: 16px;
+    top: 50%;
+
+    transform:
+        translateY(-50%);
+
+    color: #6b797d;
+
+    font-size: 16px;
+
+    cursor: pointer;
+}
+
+
+/* =====================================================
+   PASSWORD STRENGTH
+===================================================== */
+
+.password-strength {
+    display: flex;
+
+    gap: 4px;
+
+    margin-top: 7px;
+}
+
+.strength-bar {
+    height: 3px;
+
+    flex: 1;
+
+    border-radius: 5px;
+
+    background: #182125;
+
+    transition: 0.25s;
+}
+
+.strength-text {
+    color: #5f6d71;
+
+    font-size: 9px;
+
+    margin-top: 5px;
+}
+
+
+/* =====================================================
+   CREATE BUTTON
+===================================================== */
+
+.signup-button {
+    width: 100%;
+    height: 53px;
+
+    margin-top: 7px;
+
+    border: none;
+
+    border-radius: 15px;
+
+    background: #00e5ff;
+
+    color: #031014;
+
+    font-size: 14px;
+
+    font-weight: 800;
+
+    cursor: pointer;
+
+    transition: 0.25s;
+
+    box-shadow:
+        0 0 25px rgba(0,229,255,0.13);
+}
+
+.signup-button:hover {
+    transform:
+        translateY(-2px);
+
+    box-shadow:
+        0 0 30px rgba(0,229,255,0.28);
+}
+
+.signup-button:active {
+    transform: scale(0.98);
+}
+
+.signup-button:disabled {
+    opacity: 0.6;
+
+    cursor: wait;
+}
+
+
+/* =====================================================
+   MESSAGE
+===================================================== */
+
+#message {
+    min-height: 18px;
+
+    margin-top: 10px;
+
+    text-align: center;
+
+    font-size: 11px;
+}
+
+
+/* =====================================================
+   DIVIDER
+===================================================== */
+
+.divider {
+    display: flex;
+
+    align-items: center;
+
+    gap: 12px;
+
+    margin: 20px 0 15px;
+}
+
+.divider span {
+    flex: 1;
+
+    height: 1px;
+
+    background:
+        rgba(150,180,185,0.18);
+}
+
+.divider b {
+    color: #657176;
+
+    font-size: 10px;
+
+    letter-spacing: 2px;
+}
+
+
+/* =====================================================
+   SOCIAL BUTTONS
+===================================================== */
+
+.social-buttons {
+    display: flex;
+
+    flex-direction: column;
+
+    gap: 9px;
+}
+
+.social-btn {
+    width: 100%;
+    height: 44px;
+
+    border-radius: 13px;
+
+    border:
+        1px solid rgba(150,180,185,0.22);
+
+    background: transparent;
+
+    color: #e8eef0;
+
+    font-size: 12px;
+
+    cursor: pointer;
+
+    display: flex;
+
+    align-items: center;
+    justify-content: center;
+
+    gap: 11px;
+
+    transition: 0.25s;
+}
+
+.social-btn:hover {
+    border-color:
+        rgba(0,229,255,0.6);
+
+    background:
+        rgba(0,229,255,0.035);
+}
+
+.social-icon {
+    width: 20px;
+
+    text-align: center;
+
+    color: #ffffff;
+
+    font-weight: 800;
+}
+
+
+/* =====================================================
+   LOGIN
+===================================================== */
+
+.login-link {
+    text-align: center;
+
+    margin-top: 22px;
+
+    color: #68767a;
+
+    font-size: 12px;
+}
+
+.login-link a {
+    color: #00e5ff;
+
+    font-weight: 700;
+
+    text-decoration: none;
+}
+
+.login-link a:hover {
+    text-decoration: underline;
+}
+
+
+/* =====================================================
+   FOOTER
+===================================================== */
+
+.signup-footer {
+    text-align: center;
+
+    margin-top: 22px;
+
+    color: #4d595d;
+
+    font-size: 8px;
+
+    letter-spacing: 4px;
+}
+
+
+/* =====================================================
+   TABLET / MOBILE
+===================================================== */
+
+@media (max-width: 850px) {
+
+    .page {
+        padding: 18px;
+    }
+
+    .signup-wrapper {
+        max-width: 520px;
+
+        min-height: auto;
+
+        display: block;
+
+        border-radius: 24px;
+    }
+
+    .brand-panel {
+        padding: 32px 25px 25px;
+
+        border-right: none;
+
+        border-bottom:
+            1px solid rgba(150,180,185,0.16);
+    }
+
+    .brand-content {
+        margin-top: 35px;
+    }
+
+    .brand-content h1 {
+        font-size: 42px;
+    }
+
+    .features {
+        margin-top: 28px;
+    }
+
+    .signup-panel {
+        padding: 35px 25px 40px;
+    }
+}
+
+
+/* =====================================================
+   PHONE
+===================================================== */
+
+@media (max-width: 520px) {
+
+    .page {
+        padding: 10px;
+        align-items: flex-start;
+    }
+
+    .signup-wrapper {
+        margin-top: 8px;
+
+        border-radius: 20px;
+    }
+
+    .brand-panel {
+        padding: 25px 20px 20px;
+    }
+
+    .mini-label {
+        font-size: 8px;
+
+        letter-spacing: 3px;
+    }
+
+    .logo-orb {
+        width: 48px;
+        height: 48px;
+    }
+
+    .logo-orb::before {
+        width: 63px;
+        height: 21px;
+
+        left: -8px;
+        top: 14px;
+    }
+
+    .logo-letter {
+        font-size: 24px;
+    }
+
+    .brand-name {
+        font-size: 21px;
+
+        letter-spacing: 3px;
+    }
+
+    .brand-content {
+        margin-top: 27px;
+    }
+
+    .brand-content h1 {
+        font-size: 34px;
+    }
+
+    .brand-content p {
+        font-size: 12px;
+
+        line-height: 1.6;
+    }
+
+    .features {
+        grid-template-columns: 1fr;
+
+        gap: 8px;
+
+        margin-top: 20px;
+    }
+
+    .feature {
+        display: flex;
+
+        align-items: center;
+
+        gap: 13px;
+
+        padding: 12px;
+    }
+
+    .feature-icon {
+        margin: 0;
+
+        min-width: 25px;
+    }
+
+    .signup-panel {
+        padding: 28px 20px 30px;
+    }
+
+    .signup-card h2 {
+        font-size: 29px;
+    }
+
+    .subtitle {
+        font-size: 12px;
+    }
+
+}
+
+
+/* =====================================================
+   VERY SMALL PHONE
+===================================================== */
+
+@media (max-width: 360px) {
+
+    .page {
+        padding: 6px;
+    }
+
+    .brand-panel {
+        padding: 20px 16px;
+    }
+
+    .signup-panel {
+        padding: 25px 16px;
+    }
+
+    .brand-content h1 {
+        font-size: 30px;
+    }
+
+    .signup-card h2 {
+        font-size: 26px;
+    }
+}
+
+</style>
+</head>
+
+
+
+<div class="page">
+
+<div class="signup-wrapper">
+
+
+<!-- =================================================
+     BRAND PANEL
+================================================== -->
+
+<section class="brand-panel">
+
+
+<div class="brand-top">
+
+    <div class="mini-label">
+        THINK · ASK · EXPLORE · GROW
+    </div>
+
+
+    <div class="logo-area">
+
+        <div class="logo-orb">
+
+            <div class="logo-letter">
+                L
+            </div>
+
+        </div>
+
+
+        <div class="brand-name">
+            LEPSA <span>AI</span>
+        </div>
+
+    </div>
+
+</div>
+
+
+
+<div class="brand-content">
+
+    <div class="brand-line"></div>
+
+
+    <h1>
+        Join a
+        <br>
+        <span>Smarter Tomorrow.</span>
+    </h1>
+
+
+    <p>
+        Create your LEPSA AI account and unlock
+        intelligent conversations, creative ideas
+        and powerful AI assistance.
+    </p>
+
+
+
+    <div class="features">
+
+
+        <div class="feature">
+
+            <div class="feature-icon">
+                ϟ
+            </div>
+
+            <div>
+
+                <strong>
+                    Fast
+                </strong>
+
+                <span>
+                    Instant AI-powered responses.
+                </span>
+
+            </div>
+
+        </div>
+
+
+
+        <div class="feature">
+
+            <div class="feature-icon">
+                ◇
+            </div>
+
+            <div>
+
+                <strong>
+                    Secure
+                </strong>
+
+                <span>
+                    Your account stays protected.
+                </span>
+
+            </div>
+
+        </div>
+
+
+
+        <div class="feature">
+
+            <div class="feature-icon">
+                ∞
+            </div>
+
+            <div>
+
+                <strong>
+                    Limitless
+                </strong>
+
+                <span>
+                    Learn, create and explore.
+                </span>
+
+            </div>
+
+        </div>
+
+
+    </div>
+
+</div>
+
+
+</section>
+
+
+
+<!-- =================================================
+     SIGNUP PANEL
+================================================== -->
+
+<section class="signup-panel">
+
+
+<div class="signup-card">
+
+
+<div class="signup-logo">
+    L
+</div>
+
+
+<h2>
+    Create Account
+</h2>
+
+
+<div class="subtitle">
+    Join LEPSA AI and start exploring a smarter way
+    to learn, create and grow.
+</div>
+
+
+
+<form id="signupForm">
+
+
+<!-- NAME -->
+
+<div class="form-group">
+
+    <label for="name">
+        Full Name
+    </label>
+
+    <div class="input-wrap">
+
+        <input
+            type="text"
+            id="name"
+            placeholder="Enter your full name"
+            autocomplete="name"
+            required
+        >
+
+        <span class="input-icon">
+            ♙
+        </span>
+
+    </div>
+
+</div>
+
+
+
+<!-- EMAIL -->
+
+<div class="form-group">
+
+    <label for="email">
+        Email Address
+    </label>
+
+    <div class="input-wrap">
+
+        <input
+            type="email"
+            id="email"
+            placeholder="Enter your email"
+            autocomplete="email"
+            required
+        >
+
+        <span class="input-icon">
+            ✉
+        </span>
+
+    </div>
+
+</div>
+
+
+
+<!-- PASSWORD -->
+
+<div class="form-group">
+
+    <label for="password">
+        Password
+    </label>
+
+    <div class="input-wrap">
+
+        <input
+            type="password"
+            id="password"
+            placeholder="Create a password"
+            autocomplete="new-password"
+            required
+        >
+
+        <span
+            class="input-icon"
+            id="passwordToggle"
+        >
+            ◉
+        </span>
+
+    </div>
+
+
+    <div class="password-strength">
+
+        <span class="strength-bar"></span>
+        <span class="strength-bar"></span>
+        <span class="strength-bar"></span>
+        <span class="strength-bar"></span>
+
+    </div>
+
+    <div
+        class="strength-text"
+        id="strengthText"
+    >
+        Use at least 6 characters
+    </div>
+
+</div>
+
+
+
+<!-- CONFIRM -->
+
+<div class="form-group">
+
+    <label for="confirmPassword">
+        Confirm Password
+    </label>
+
+    <div class="input-wrap">
+
+        <input
+            type="password"
+            id="confirmPassword"
+            placeholder="Enter your password again"
+            autocomplete="new-password"
+            required
+        >
+
+        <span
+            class="input-icon"
+            id="confirmToggle"
+        >
+            ◉
+        </span>
+
+    </div>
+
+</div>
+
+
+
+<!-- BUTTON -->
+
+<button
+    type="submit"
+    class="signup-button"
+    id="signupButton"
+>
+    Create Account →
+</button>
+
+
+<div id="message"></div>
+
+
+</form>
+
+
+
+<!-- DIVIDER -->
+
+<div class="divider">
+
+    <span></span>
+
+    <b>OR</b>
+
+    <span></span>
+
+</div>
+
+
+
+<!-- SOCIAL -->
+
+<div class="social-buttons">
+
+
+<button
+    type="button"
+    class="social-btn"
+    onclick="socialUnavailable('Google')"
+>
+
+    <span class="social-icon">
+        G
+    </span>
+
+    Continue with Google
+
+</button>
+
+
+
+<button
+    type="button"
+    class="social-btn"
+    onclick="socialUnavailable('Apple')"
+>
+
+    <span class="social-icon">
+        ●
+    </span>
+
+    Continue with Apple
+
+</button>
+
+
+
+<button
+    type="button"
+    class="social-btn"
+    onclick="socialUnavailable('Phone')"
+>
+
+    <span class="social-icon">
+        ☎
+    </span>
+
+    Continue with Phone
+
+</button>
+
+
+</div>
+
+
+
+<!-- LOGIN -->
+
+<div class="login-link">
+
+    Already have an account?
+
+    <a href="login.html">
+        Login
+    </a>
+
+</div>
+
+
+<div class="signup-footer">
+    LEPSA AI · BUILT FOR A SMARTER YOU
+</div>
+
+
+</div>
+
+</section>
+
+
+</div>
+</div>
+
+<script>
+
+/* =====================================================
+   PASSWORD TOGGLE
+===================================================== */
+
+function setupPasswordToggle(inputId, buttonId) {
+
+    const input =
+        document.getElementById(inputId);
+
+    const button =
+        document.getElementById(buttonId);
+
+    button.addEventListener(
+        "click",
+        function () {
+
+            if (input.type === "password") {
+
+                input.type = "text";
+
+            } else {
+
+                input.type = "password";
+
+            }
+
+        }
+    );
+}
+
+
+setupPasswordToggle(
+    "password",
+    "passwordToggle"
+);
+
+
+setupPasswordToggle(
+    "confirmPassword",
+    "confirmToggle"
+);
+
+
+/* =====================================================
+   PASSWORD STRENGTH
+===================================================== */
+
+const passwordInput =
+    document.getElementById("password");
+
+const strengthBars =
+    document.querySelectorAll(".strength-bar");
+
+const strengthText =
+    document.getElementById("strengthText");
+
+
+passwordInput.addEventListener(
+    "input",
+    function () {
+
+        const value =
+            passwordInput.value;
+
+        let strength = 0;
+
+
+        if (value.length >= 6) {
+            strength++;
+        }
+
+        if (value.length >= 8) {
+            strength++;
+        }
+
+        if (/[A-Z]/.test(value)) {
+            strength++;
+        }
+
+        if (/[0-9]/.test(value)) {
+            strength++;
+        }
+
+
+        strengthBars.forEach(
+            function (bar, index) {
+
+                if (index < strength) {
+
+                    bar.style.background =
+                        "#00e5ff";
+
+                    bar.style.boxShadow =
+                        "0 0 7px rgba(0,229,255,0.5)";
+
+                } else {
+
+                    bar.style.background =
+                        "#182125";
+
+                    bar.style.boxShadow =
+                        "none";
+
+                }
+
+            }
+        );
+
+
+        if (!value) {
+
+            strengthText.textContent =
+                "Use at least 6 characters";
+
+        } else if (strength <= 1) {
+
+            strengthText.textContent =
+                "Weak password";
+
+        } else if (strength === 2) {
+
+            strengthText.textContent =
+                "Fair password";
+
+        } else if (strength === 3) {
+
+            strengthText.textContent =
+                "Good password";
+
+        } else {
+
+            strengthText.textContent =
+                "Strong password";
+
+        }
+
+    }
+);
+
+
+/* =====================================================
+   SIGNUP
+===================================================== */
+
+document
+.getElementById("signupForm")
+.addEventListener(
+    "submit",
+    async function (event) {
+
+        event.preventDefault();
+
+
+        const name =
+            document
+            .getElementById("name")
+            .value
+            .trim();
+
+
+        const email =
+            document
+            .getElementById("email")
+            .value
+            .trim();
+
+
+        const password =
+            document
+            .getElementById("password")
+            .value;
+
+
+        const confirmPassword =
+            document
+            .getElementById("confirmPassword")
+            .value;
+
+
+        const message =
+            document
+            .getElementById("message");
+
+
+        const button =
+            document
+            .getElementById("signupButton");
+
+
+        /* PASSWORD CHECK */
+
+        if (password.length < 6) {
+
+            message.textContent =
+                "Password must be at least 6 characters.";
+
+            message.style.color =
+                "#ff6878";
+
+            return;
+        }
+
+
+        if (password !== confirmPassword) {
+
+            message.textContent =
+                "Passwords do not match.";
+
+            message.style.color =
+                "#ff6878";
+
+            return;
+        }
+
+
+        /* LOADING */
+
+        button.disabled = true;
+
+        button.textContent =
+            "Creating account...";
+
+
+        message.textContent =
+            "Please wait...";
+
+        message.style.color =
+            "#00e5ff";
+
+
+        try {
+
+            const response =
+                await fetch(
+                    "auth.php",
+                    {
+                        method: "POST",
+
+                        headers: {
+                            "Content-Type":
+                                "application/json"
+                        },
+
+                        body:
+                            JSON.stringify({
+
+                                action:
+                                    "signup",
+
+                                name:
+                                    name,
+
+                                email:
+                                    email,
+
+                                password:
+                                    password
+
+                            })
+                    }
+                );
+
+
+            const data =
+                await response.json();
+
+
+            if (data.success) {
+
+                message.textContent =
+                    "Account created successfully!";
+
+                message.style.color =
+                    "#00e5ff";
+
+
+                setTimeout(
+                    function () {
+
+                        window.location.href =
+                            "login.html";
+
+                    },
+                    900
+                );
+
+
+            } else {
+
+                message.textContent =
+                    data.message ||
+                    "Signup failed.";
+
+                message.style.color =
+                    "#ff6878";
+
+
+                button.disabled = false;
+
+                button.textContent =
+                    "Create Account →";
+
+            }
+
+
+        } catch (error) {
+
+            console.error(error);
+
+
+            message.textContent =
+                "Server se connection nahi ho pa raha.";
+
+            message.style.color =
+                "#ff6878";
+
+
+            button.disabled = false;
+
+            button.textContent =
+                "Create Account →";
+
+        }
+
+    }
+);
+
+
+/* =====================================================
+   SOCIAL BUTTONS
+===================================================== */
+
+function socialUnavailable(provider) {
+
+    alert(
+        provider +
+        " login abhi LEPSA mein connected nahi hai."
+    );
+
+}
+
+</script>
+
+</body>
+</html>
