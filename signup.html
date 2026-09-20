@@ -5,6 +5,7 @@
 
 <meta name="viewport"
       content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<script src="https://accounts.google.com/gsi/client" async defer></script>
 
 <title>Create Account — LEPSA AI</title>
 
@@ -1351,16 +1352,13 @@ body::after {
 <button
     type="button"
     class="social-btn"
-    onclick="socialUnavailable('Google')"
+    id="googleSignupBtn"
+    onclick="triggerGoogleSignup()"
 >
-
-    <span class="social-icon">
-        G
-    </span>
-
+    <span class="social-icon" style="color:#00e5ff;">G</span>
     Continue with Google
-
 </button>
+
 
 
 
@@ -1426,6 +1424,71 @@ body::after {
 </div>
 
 <script>
+    
+    // Google Client ID (login.html wali same client ID yahan paste karein)
+const GOOGLE_CLIENT_ID = "PASTE_YOUR_GOOGLE_CLIENT_ID_HERE.apps.googleusercontent.com";
+
+window.addEventListener("load", function () {
+    if (window.google) {
+        google.accounts.id.initialize({
+            client_id: GOOGLE_CLIENT_ID,
+            callback: handleGoogleSignupResponse,
+            auto_select: false
+        });
+    }
+});
+
+function triggerGoogleSignup() {
+    if (window.google) {
+        google.accounts.id.prompt();
+    } else {
+        alert("Google services load nahi hui, internet connection check karein.");
+    }
+}
+
+async function handleGoogleSignupResponse(response) {
+    const message = document.getElementById("message");
+    const button = document.getElementById("signupButton");
+    
+    message.textContent = "Creating account with Google...";
+    message.style.color = "#00e5ff";
+    if (button) button.disabled = true;
+
+    try {
+        const res = await fetch("auth.php", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                action: "social_login",
+                provider: "google",
+                token: response.credential
+            })
+        });
+
+        const data = await res.json();
+
+        if (data.success) {
+            sessionStorage.setItem("lepsaLoggedIn", "true");
+            sessionStorage.setItem("lepsaUserName", data.user.name);
+            sessionStorage.setItem("lepsaUserEmail", data.user.email);
+
+            message.textContent = "Account verified! Redirecting to LEPSA...";
+            setTimeout(() => {
+                window.location.href = "index.html";
+            }, 600);
+        } else {
+            message.textContent = data.message || "Google registration failed.";
+            message.style.color = "#ff6878";
+            if (button) button.disabled = false;
+        }
+    } catch (err) {
+        console.error(err);
+        message.textContent = "Server connection failed.";
+        message.style.color = "#ff6878";
+        if (button) button.disabled = false;
+    }
+}
+
 
 /* =====================================================
    PASSWORD TOGGLE

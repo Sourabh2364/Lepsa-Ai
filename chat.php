@@ -12,86 +12,91 @@ if ($_SERVER["REQUEST_METHOD"] === "OPTIONS") {
 
 require_once __DIR__ . "/config.php";
 
-$apiKey = defined('GEMINI_API_KEY') ? GEMINI_API_KEY : ($GEMINI_API_KEY ?? "");
-$ttsApiKey = $apiKey;
+$openRouterKey = defined('OPENROUTER_API_KEY') ? OPENROUTER_API_KEY : "";
+$elevenLabsKey = defined('ELEVENLABS_API_KEY') ? ELEVENLABS_API_KEY : "";
 
-/* =========================
-   API KEY CHECK
-========================= */
+// =====================================================
+// CRASH-PROOF SESSION & USER CREDIT CHECK
+// =====================================================
 
-if (
-    $apiKey === "" ||
-    $apiKey === "PASTE_NEW_GEMINI_API_KEY_HERE"
-) {
-    http_response_code(500);
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
+$userId = $_SESSION["user_id"] ?? null;
 
-    echo json_encode([
-        "success" => false,
-        "reply" => "⚠️ Gemini API key is not configured. Please put your new API key in config.php."
-    ]);
+$dbFile = __DIR__ . "/lepsa_users.sqlite";
+$db = null;
+$memoryFacts = [];
 
-    exit;
+if ($userId && file_exists($dbFile)) {
+    try {
+        $db = new SQLite3($dbFile);
+        $stmt = @$db->prepare("SELECT credits, tier FROM users WHERE id = :id LIMIT 1");
+        if ($stmt) {
+            $stmt->bindValue(":id", $userId, SQLITE3_INTEGER);
+            $res = $stmt->execute();
+            $userRow = $res ? $res->fetchArray(SQLITE3_ASSOC) : null;
+
+            if ($userRow && isset($userRow["credits"]) && intval($userRow["credits"]) <= 0 && ($userRow["tier"] ?? 'free') === 'free') {
+                echo json_encode([
+                    "success" => false,
+                    "reply" => "⚠️ Aapke daily free credits khatam ho gaye hain! Naya plan upgrade karein."
+                ], JSON_UNESCAPED_UNICODE);
+                exit;
+            }
+        }
+
+        // ---- MEMORY: table (agar na ho to bana do) ----
+        $db->exec("
+            CREATE TABLE IF NOT EXISTS memories (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                fact TEXT NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        ");
+
+        // ---- CONVERSATION HISTORY: tables (agar na ho to bana do) ----
+        $db->exec("
+            CREATE TABLE IF NOT EXISTS conversations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                title TEXT NOT NULL DEFAULT 'New Chat',
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        ");
+        $db->exec("
+            CREATE TABLE IF NOT EXISTS chat_messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                conversation_id INTEGER NOT NULL,
+                role TEXT NOT NULL,
+                content TEXT NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        ");
+
+        // ---- MEMORY: is user ki purani saved facts load karo ----
+        $memStmt = @$db->prepare("SELECT fact FROM memories WHERE user_id = :id ORDER BY id DESC LIMIT 40");
+        if ($memStmt) {
+            $memStmt->bindValue(":id", $userId, SQLITE3_INTEGER);
+            $memRes = $memStmt->execute();
+            if ($memRes) {
+                while ($row = $memRes->fetchArray(SQLITE3_ASSOC)) {
+                    $memoryFacts[] = $row["fact"];
+                }
+            }
+        }
+        $memoryFacts = array_reverse($memoryFacts); // purani se nayi order
+
+    } catch (Exception $e) {
+        // Safe bypass
+    }
 }
 
-/* =========================
-   MODEL (ORIGINAL RETAINED)
-========================= */
-
-$models = [
-    "gemini-3.8-flash",
-    "gemini-3.7-flash",
-    "gemini-3.6-flash"
-];
-
-/* =========================
-   SYSTEM INSTRUCTION
-========================= */
-
-$systemInstruction = "
-You are LEPSA AI, a highly capable, reliable and helpful AI assistant.
-
-IDENTITY:
-- Your name is LEPSA AI.
-- LEPSA is the AI application and brand created by its owner.
-- The underlying AI technology is provided through the Gemini API.
-- Do not claim that LEPSA itself is Google Gemini.
-
-OWNER:
-- The owner and creator of this LEPSA application is Saurav.
-- When appropriate, address the owner by their name.
-- If someone asks who created or owns LEPSA, say that Saurav is the creator and owner of this application.
-- Do not reveal or invent ownership information about other people.
-
-GOALS:
-- Understand the user's actual question.
-- Use conversation history when provided.
-- Give accurate and useful answers.
-- Do not invent facts.
-- If uncertain, clearly say so.
-- Explain difficult topics simply when appropriate.
-- Use step-by-step explanations when useful.
-- Do not unnecessarily repeat information.
-- Stay relevant to the user's question.
-- For programming questions, provide practical and correct code.
-- For mathematics, calculate carefully.
-- Prioritize correctness over guessing.
-- Be helpful, respectful and clear.
-- Adapt explanations to the user's level.
-
-CONVERSATION:
-- Use previous messages when they are provided as conversation history.
-- Maintain context naturally.
-- If the answer depends on missing information, ask a relevant question instead of guessing.
-
-SAFETY AND ACCURACY:
-- Never intentionally provide false information.
-- Do not pretend to know something you do not know.
-- Clearly distinguish facts from assumptions.
-";
-
-/* =========================
-   READ REQUEST
-========================= */
+/* =====================================================
+   READ INPUT REQUEST
+===================================================== */
 
 $rawInput = file_get_contents("php://input");
 $input = json_decode($rawInput, true);
@@ -99,52 +104,353 @@ $input = json_decode($rawInput, true);
 if (!is_array($input)) {
     echo json_encode([
         "success" => false,
-        "reply" => "⚠️ Invalid request received."
+        "reply" => "⚠️ Invalid request format received."
     ]);
     exit;
 }
 
-$message = trim($input["message"] ?? "");
-$history = $input["history"] ?? [];
-
-/* =========================
-   TTS REQUEST
-========================= */
+/* =====================================================
+   TTS HANDLER (ELEVENLABS TURBO + GOOGLE FALLBACK)
+===================================================== */
 
 if (($input["action"] ?? "") === "tts") {
     $ttsText = trim($input["text"] ?? "");
+    $ttsText = mb_substr($ttsText, 0, 250, "UTF-8");
 
     if ($ttsText === "") {
-        echo json_encode([
-            "success" => false,
-            "error" => "No text for voice."
-        ]);
+        echo json_encode(["success" => false, "error" => "Text is empty."]);
         exit;
     }
 
-    $ttsResult = callGeminiTTS($ttsText, $ttsApiKey);
+    $elevenError = null;
 
-    if ($ttsResult["success"]) {
+    if (!empty($elevenLabsKey)) {
+        $voiceId = "21m00Tcm4TlvDq8ikWAM"; // Rachel Multilingual
+        $url = "https://api.elevenlabs.io/v1/text-to-speech/" . $voiceId . "?optimize_streaming_latency=4";
+
+        $payload = json_encode([
+            "text" => $ttsText,
+            "model_id" => "eleven_turbo_v2_5",
+            "voice_settings" => [
+                "stability" => 0.45,
+                "similarity_boost" => 0.8,
+                "style" => 0.0,
+                "use_speaker_boost" => true
+            ]
+        ]);
+
+        $ch = curl_init($url);
+        curl_setopt($ch, CURLOPT_POST, true);
+        curl_setopt($ch, CURLOPT_HTTPHEADER, [
+            "Content-Type: application/json",
+            "Accept: audio/mpeg",
+            "xi-api-key: " . trim($elevenLabsKey)
+        ]);
+        curl_setopt($ch, CURLOPT_POSTFIELDS, $payload);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_BINARYTRANSFER, true);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 0);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 15);
+
+        $audioData = curl_exec($ch);
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $curlErr = curl_error($ch);
+        curl_close($ch);
+
+        if ($httpCode === 200 && !empty($audioData) && strpos($audioData, "{") !== 0) {
+            echo json_encode([
+                "success" => true,
+                "audio" => base64_encode($audioData),
+                "mimeType" => "audio/mpeg",
+                "engine" => "elevenlabs"
+            ]);
+            exit;
+        }
+
+        $errResponse = json_decode($audioData, true);
+        $detail = $errResponse["detail"]["message"] ?? $errResponse["detail"] ?? $curlErr ?? ("HTTP Code: " . $httpCode);
+        $elevenError = is_array($detail) ? json_encode($detail) : $detail;
+    } else {
+        $elevenError = "ELEVENLABS_API_KEY missing in config.php";
+    }
+
+    // Google TTS Fallback
+    $gUrl = "https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=hi&q=" . urlencode(mb_substr($ttsText, 0, 200, "UTF-8"));
+
+    $ch = curl_init($gUrl);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_BINARYTRANSFER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 0);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 12);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, [
+        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36",
+        "Referer: https://translate.google.com/"
+    ]);
+    $gAudio = curl_exec($ch);
+    $gHttpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $gCurlErr = curl_error($ch);
+    curl_close($ch);
+
+    if ($gHttpCode === 200 && !empty($gAudio)) {
         echo json_encode([
             "success" => true,
-            "audio" => $ttsResult["audio"],
-            "mimeType" => $ttsResult["mimeType"]
+            "audio" => base64_encode($gAudio),
+            "mimeType" => "audio/mpeg",
+            "engine" => "google_fallback",
+            "debug_eleven_error" => $elevenError
         ]);
     } else {
         echo json_encode([
             "success" => false,
-            "error" => "TTS error",
-            "details" => $ttsResult["error"] ?? ""
+            "error" => "TTS Failed. ElevenLabs Error: " . $elevenError . " | Google: " . $gCurlErr
         ]);
     }
     exit;
 }
 
-/* =========================
-   EMPTY MESSAGE
-========================= */
+/* =====================================================
+   MEMORY: list / clear (user control & transparency)
+===================================================== */
 
-if ($message === "") {
+if (($input["action"] ?? "") === "list_memory") {
+    $facts = [];
+    if ($userId && $db) {
+        $stmt = @$db->prepare("SELECT id, fact, created_at FROM memories WHERE user_id = :id ORDER BY id DESC");
+        if ($stmt) {
+            $stmt->bindValue(":id", $userId, SQLITE3_INTEGER);
+            $res = $stmt->execute();
+            if ($res) {
+                while ($row = $res->fetchArray(SQLITE3_ASSOC)) {
+                    $facts[] = $row;
+                }
+            }
+        }
+    }
+    echo json_encode(["success" => true, "memories" => $facts]);
+    exit;
+}
+
+if (($input["action"] ?? "") === "clear_memory") {
+    if ($userId && $db) {
+        @$db->exec("DELETE FROM memories WHERE user_id = " . intval($userId));
+    }
+    echo json_encode(["success" => true]);
+    exit;
+}
+
+/* =====================================================
+   CONVERSATION HISTORY: list / get / new / delete / rename
+===================================================== */
+
+if (($input["action"] ?? "") === "list_conversations") {
+    $convos = [];
+    if ($userId && $db) {
+        $stmt = @$db->prepare("SELECT id, title, updated_at FROM conversations WHERE user_id = :id ORDER BY updated_at DESC LIMIT 100");
+        if ($stmt) {
+            $stmt->bindValue(":id", $userId, SQLITE3_INTEGER);
+            $res = $stmt->execute();
+            if ($res) {
+                while ($row = $res->fetchArray(SQLITE3_ASSOC)) {
+                    $convos[] = $row;
+                }
+            }
+        }
+    }
+    echo json_encode(["success" => true, "conversations" => $convos]);
+    exit;
+}
+
+if (($input["action"] ?? "") === "get_conversation") {
+    $convId = intval($input["conversation_id"] ?? 0);
+    $msgs = [];
+    if ($userId && $db && $convId > 0) {
+        // Ownership check — sirf apni hi conversation access kar sake
+        $ownStmt = @$db->prepare("SELECT id FROM conversations WHERE id = :cid AND user_id = :uid LIMIT 1");
+        $ownStmt->bindValue(":cid", $convId, SQLITE3_INTEGER);
+        $ownStmt->bindValue(":uid", $userId, SQLITE3_INTEGER);
+        $ownRes = $ownStmt->execute();
+        if ($ownRes && $ownRes->fetchArray(SQLITE3_ASSOC)) {
+            $stmt = @$db->prepare("SELECT role, content FROM chat_messages WHERE conversation_id = :cid ORDER BY id ASC");
+            $stmt->bindValue(":cid", $convId, SQLITE3_INTEGER);
+            $res = $stmt->execute();
+            if ($res) {
+                while ($row = $res->fetchArray(SQLITE3_ASSOC)) {
+                    $msgs[] = $row;
+                }
+            }
+        }
+    }
+    echo json_encode(["success" => true, "messages" => $msgs]);
+    exit;
+}
+
+if (($input["action"] ?? "") === "delete_conversation") {
+    $convId = intval($input["conversation_id"] ?? 0);
+    if ($userId && $db && $convId > 0) {
+        $ownStmt = @$db->prepare("SELECT id FROM conversations WHERE id = :cid AND user_id = :uid LIMIT 1");
+        $ownStmt->bindValue(":cid", $convId, SQLITE3_INTEGER);
+        $ownStmt->bindValue(":uid", $userId, SQLITE3_INTEGER);
+        $ownRes = $ownStmt->execute();
+        if ($ownRes && $ownRes->fetchArray(SQLITE3_ASSOC)) {
+            @$db->exec("DELETE FROM chat_messages WHERE conversation_id = " . $convId);
+            @$db->exec("DELETE FROM conversations WHERE id = " . $convId);
+        }
+    }
+    echo json_encode(["success" => true]);
+    exit;
+}
+
+if (($input["action"] ?? "") === "rename_conversation") {
+    $convId = intval($input["conversation_id"] ?? 0);
+    $newTitle = trim(mb_substr($input["title"] ?? "", 0, 60, "UTF-8"));
+    if ($userId && $db && $convId > 0 && $newTitle !== "") {
+        $stmt = @$db->prepare("UPDATE conversations SET title = :t WHERE id = :cid AND user_id = :uid");
+        if ($stmt) {
+            $stmt->bindValue(":t", $newTitle, SQLITE3_TEXT);
+            $stmt->bindValue(":cid", $convId, SQLITE3_INTEGER);
+            $stmt->bindValue(":uid", $userId, SQLITE3_INTEGER);
+            @$stmt->execute();
+        }
+    }
+    echo json_encode(["success" => true]);
+    exit;
+}
+
+/* =====================================================
+   OPENROUTER KEY VALIDATION
+===================================================== */
+
+if (empty($openRouterKey)) {
+    http_response_code(500);
+    echo json_encode([
+        "success" => false,
+        "reply" => "⚠️ OPENROUTER_API_KEY config.php mein missing hai."
+    ]);
+    exit;
+}
+
+/* =====================================================
+   PRO CORE INTELLIGENCE & LANGUAGE MIRRORING
+===================================================== */
+
+$appMode = trim($input["app_mode"] ?? "code");
+$isVoiceMode = ($input["mode"] ?? "") === "voice";
+
+$systemInstruction = "
+You are LEPSA AI, a cutting-edge, elite AI assistant created and owned by Saurav.
+
+STRICT LANGUAGE MATCHING RULES:
+1. MATCH THE USER'S EXACT LANGUAGE & SCRIPT:
+   - If user asks in English -> Respond ONLY in natural, fluent, professional English. Never translate into Hindi.
+   - If user asks in Hinglish (Roman script Hindi like 'kya kar rahe ho', 'kaise ho', 'mera code check karo') -> Respond ONLY in natural Hinglish using the Latin/Roman English alphabet. NEVER use Devanagari Hindi script for Hinglish queries.
+   - If user asks in Devanagari script (हिंदी) -> Respond in polite, grammatically correct Hindi script.
+2. NEVER use literal or broken translations. Speak naturally like an expert human colleague.
+3. Be confident, precise, direct, and zero-fluff.
+";
+
+if ($appMode === "code") {
+    $systemInstruction .= "\nCORE: SOFTWARE & SYSTEMS ARCHITECT
+- Write clean, production-grade, secure code (Python, C++, JS, PHP, SQL).
+- Point out bugs immediately, provide fixed code inside markdown, and state time/space complexity.";
+} elseif ($appMode === "business") {
+    $systemInstruction .= "\nCORE: B2B SALES & CLIENT CONSULTANT
+- Deliver persuasive, polite, and executive-level business communication.
+- Focus on answering customer queries, taking appointment details, and resolving pain points.";
+} elseif ($appMode === "study") {
+    $systemInstruction .= "\nCORE: ACADEMIC & COMPETITIVE EXAM MENTOR
+- Break down complex engineering, science, and exam concepts with intuitive mental models.
+- Give crisp formula revisions and end with a quick practice question.";
+}
+
+if ($isVoiceMode) {
+    $systemInstruction .= "\nVOICE CONVERSATION ACTIVE:
+- Limit response to 2 to 3 natural spoken sentences matching user tongue (English or Hinglish).
+- Strictly NO markdown formatting, asterisks, bullet points, or code blocks.";
+}
+
+/* =====================================================
+   MEMORY: purani saved facts context me do + naye facts
+   save karne ka tareeka batao
+===================================================== */
+
+if (!empty($memoryFacts)) {
+    $systemInstruction .= "\n\nWHAT YOU REMEMBER ABOUT THIS USER (use naturally, don't recite the list):\n";
+    foreach ($memoryFacts as $fact) {
+        $systemInstruction .= "- " . $fact . "\n";
+    }
+}
+
+if ($userId) {
+    $systemInstruction .= "\n\nMEMORY SAVING RULE:
+If the user shares a durable personal fact worth remembering for future chats (their name, profession, city, a strong preference, an ongoing project, a goal) — and it is NOT already in the remembered list above — append ONE short line at the very end of your reply in this exact hidden format:
+[MEMORY]short fact in third person, under 15 words[/MEMORY]
+Only do this for genuinely new, important, durable facts. Do NOT do this for casual chat, questions, or one-off requests. Never mention this tag to the user, never explain it — it is invisible to them.";
+}
+
+/* =====================================================
+   REAL-TIME SEARCH ENGINE (DuckDuckGo API)
+===================================================== */
+
+function fetchWebResults($query) {
+    $cleanQuery = urlencode(trim($query));
+    $url = "https://api.duckduckgo.com/?q={$cleanQuery}&format=json&no_html=1&skip_disambig=1";
+
+    $ch = curl_init($url);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 6);
+    curl_setopt($ch, CURLOPT_USERAGENT, "Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
+    $res = curl_exec($ch);
+    curl_close($ch);
+
+    if (!$res) return ["context" => "", "sources" => []];
+
+    $data = json_decode($res, true);
+    $context = "";
+    $sources = [];
+
+    if (!empty($data["AbstractText"])) {
+        $context .= $data["AbstractText"] . "\n";
+        if (!empty($data["AbstractURL"])) {
+            $sources[] = [
+                "title" => $data["Heading"] ?: "Primary Source",
+                "url" => $data["AbstractURL"]
+            ];
+        }
+    }
+
+    if (!empty($data["RelatedTopics"]) && is_array($data["RelatedTopics"])) {
+        $count = 0;
+        foreach ($data["RelatedTopics"] as $topic) {
+            if (isset($topic["Text"]) && isset($topic["FirstURL"])) {
+                $context .= "- " . $topic["Text"] . "\n";
+                $sources[] = [
+                    "title" => mb_substr($topic["Text"], 0, 30) . "...",
+                    "url" => $topic["FirstURL"]
+                ];
+                $count++;
+                if ($count >= 3) break;
+            }
+        }
+    }
+
+    return [
+        "context" => trim($context),
+        "sources" => $sources
+    ];
+}
+
+/* =====================================================
+   CONVERSATION PAYLOAD
+===================================================== */
+
+$message = trim($input["message"] ?? "");
+$history = $input["history"] ?? [];
+$imageBase64 = trim($input["image"] ?? "");
+
+if ($message === "" && $imageBase64 === "") {
     echo json_encode([
         "success" => false,
         "reply" => "Please enter a message."
@@ -152,276 +458,427 @@ if ($message === "") {
     exit;
 }
 
-/* =========================
-   BUILD CONVERSATION
-========================= */
+/* =====================================================
+   CONVERSATION HISTORY: is message ko kis conversation me
+   save karna hai — existing ya nayi bana do
+===================================================== */
+
+$conversationId = null;
+
+if ($userId && $db) {
+    $requestedConvId = intval($input["conversation_id"] ?? 0);
+
+    if ($requestedConvId > 0) {
+        $ownStmt = @$db->prepare("SELECT id FROM conversations WHERE id = :cid AND user_id = :uid LIMIT 1");
+        $ownStmt->bindValue(":cid", $requestedConvId, SQLITE3_INTEGER);
+        $ownStmt->bindValue(":uid", $userId, SQLITE3_INTEGER);
+        $ownRes = $ownStmt->execute();
+        if ($ownRes && $ownRes->fetchArray(SQLITE3_ASSOC)) {
+            $conversationId = $requestedConvId;
+        }
+    }
+
+    if ($conversationId === null) {
+        $autoTitle = $message !== "" ? mb_substr($message, 0, 40, "UTF-8") : "New Chat";
+        $titleStmt = @$db->prepare("INSERT INTO conversations (user_id, title) VALUES (:uid, :title)");
+        if ($titleStmt) {
+            $titleStmt->bindValue(":uid", $userId, SQLITE3_INTEGER);
+            $titleStmt->bindValue(":title", $autoTitle, SQLITE3_TEXT);
+            $titleStmt->execute();
+            $conversationId = $db->lastInsertRowID();
+        }
+    }
+
+    if ($conversationId) {
+        $saveUserMsg = @$db->prepare("INSERT INTO chat_messages (conversation_id, role, content) VALUES (:cid, 'user', :content)");
+        if ($saveUserMsg) {
+            $saveUserMsg->bindValue(":cid", $conversationId, SQLITE3_INTEGER);
+            $saveUserMsg->bindValue(":content", ($message !== "" ? $message : "[Image attached]"), SQLITE3_TEXT);
+            @$saveUserMsg->execute();
+        }
+        @$db->exec("UPDATE conversations SET updated_at = CURRENT_TIMESTAMP WHERE id = " . intval($conversationId));
+    }
+}
+
+$searchSources = [];
+$searchTriggers = ['latest', 'aaj', 'today', 'current', 'news', 'update', 'price', 'rate', 'who is', 'kon hai', 'kab'];
+$needsSearch = false;
+$lowerMsg = strtolower($message);
+
+foreach ($searchTriggers as $trig) {
+    if (strpos($lowerMsg, $trig) !== false) {
+        $needsSearch = true;
+        break;
+    }
+}
+
+if ($needsSearch) {
+    $webData = fetchWebResults($message);
+    if (!empty($webData["context"])) {
+        $systemInstruction .= "\n\nLIVE WEB CONTEXT:\n" . $webData["context"] . "\nUse this up-to-date web information to answer.";
+        $searchSources = $webData["sources"];
+    }
+}
 
 $contents = [];
 
 if (is_array($history)) {
     foreach ($history as $item) {
-        if (!isset($item["role"]) || !isset($item["text"])) {
-            continue;
-        }
+        if (!is_array($item)) continue;
+        $text = trim((string)($item["text"] ?? ""));
+        if ($text === "") continue;
 
-        $role = $item["role"];
-        if ($role !== "user" && $role !== "model") {
-            continue;
-        }
-
-        $text = trim((string)$item["text"]);
-        if ($text === "") {
-            continue;
-        }
-
+        $role = in_array(($item["role"] ?? ""), ["model", "bot", "assistant"]) ? "assistant" : "user";
         $contents[] = [
             "role" => $role,
-            "parts" => [
-                ["text" => $text]
-            ]
+            "content" => $text
         ];
     }
 }
 
-$contents[] = [
-    "role" => "user",
-    "parts" => [
-        ["text" => $message]
-    ]
-];
+if ($imageBase64 !== "") {
+    $imgMimeType = trim($input["mimeType"] ?? "image/jpeg");
+    if (strpos($imgMimeType, "image/") !== 0) $imgMimeType = "image/jpeg";
 
-/* =========================
-   GEMINI FUNCTION
-========================= */
-
-function callGemini($model, $apiKey, $contents, $systemInstruction) {
-    $url = "https://generativelanguage.googleapis.com/v1beta/models/" . $model . ":generateContent";
-
-    $data = [
-        "systemInstruction" => [
-            "parts" => [
-                ["text" => $systemInstruction]
-            ]
-        ],
-        "contents" => $contents,
-        "generationConfig" => [
-            "thinkingConfig" => [
-                "thinkingLevel" => "medium"
-            ]
+    $contents[] = [
+        "role" => "user",
+        "content" => [
+            ["type" => "text", "text" => ($message !== "" ? $message : "Is image ko dhyan se dekho aur batao ismein kya hai. Agar koi sawaal ho to us hisaab se jawab do.")],
+            ["type" => "image_url", "image_url" => ["url" => "data:" . $imgMimeType . ";base64," . $imageBase64]]
         ]
     ];
+} elseif ($message !== "") {
+    $contents[] = [
+        "role" => "user",
+        "content" => $message
+    ];
+}
 
-    $jsonData = json_encode($data, JSON_UNESCAPED_UNICODE);
+/* =====================================================
+   OPENROUTER ENGINE
+===================================================== */
 
-    if ($jsonData === false) {
-        return [
-            "success" => false,
-            "retry" => false,
-            "code" => 0,
-            "error" => "Could not create JSON request."
-        ];
-    }
+function callOpenRouter($apiKey, $contents, $systemInstruction) {
+    $url = "https://openrouter.ai/api/v1/chat/completions";
+
+    $messages = array_merge(
+        [["role" => "system", "content" => $systemInstruction]],
+        $contents
+    );
+
+    // Primary Engine: Google Gemini 2.0 Flash
+    $payload = [
+        "model" => "google/gemini-2.0-flash-exp:free",
+        "messages" => $messages,
+        "temperature" => 0.65,
+        "max_tokens" => 1500
+    ];
 
     $ch = curl_init($url);
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_HTTPHEADER, [
         "Content-Type: application/json",
-        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36",
-        "x-goog-api-key: " . $apiKey
+        "Authorization: Bearer " . trim($apiKey),
+        "HTTP-Referer: http://127.1.1.0:8080",
+        "X-Title: LEPSA AI"
     ]);
-    curl_setopt($ch, CURLOPT_POSTFIELDS, $jsonData);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($payload));
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-
-    // cacert missing hone par fallback SSL bypass
-    if (file_exists(__DIR__ . "/cacert.pem")) {
-        curl_setopt($ch, CURLOPT_CAINFO, __DIR__ . "/cacert.pem");
-    } else {
-        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
-        curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 0);
-    }
-
-    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 15);
-    curl_setopt($ch, CURLOPT_TIMEOUT, 60);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 0);
+    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 12);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 25);
 
     $result = curl_exec($ch);
-    $curlError = curl_error($ch);
-    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $curlErr = curl_error($ch);
     curl_close($ch);
 
-    if ($result === false) {
+    if ($result !== false && empty($curlErr)) {
+        $res = json_decode($result, true);
+        if (isset($res["choices"][0]["message"]["content"])) {
+            return [
+                "success" => true,
+                "reply" => $res["choices"][0]["message"]["content"]
+            ];
+        }
+    }
+
+    // Secondary Engine: LLaMA 3.3 70B Instruct
+    return fallbackLlama($apiKey, $messages);
+}
+
+function fallbackLlama($apiKey, $messages) {
+    $url = "https://openrouter.ai/api/v1/chat/completions";
+
+    $payload = [
+        "model" => "gemini-2.5-flash",
+        "messages" => $messages,
+        "temperature" => 0.65,
+        "max_tokens" => 1200
+    ];
+
+    $ch = curl_init($url);
+    curl_setopt($ch, CURLOPT_POST, true);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, [
+        "Content-Type: application/json",
+        "Authorization: Bearer " . trim($apiKey),
+        "HTTP-Referer: http://127.1.1.0:8080",
+        "X-Title: LEPSA AI"
+    ]);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($payload));
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 0);
+    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 12);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 25);
+
+    $result = curl_exec($ch);
+    $curlErr = curl_error($ch);
+    curl_close($ch);
+
+    if ($result === false || !empty($curlErr)) {
         return [
             "success" => false,
-            "retry" => false,
-            "code" => 0,
-            "error" => $curlError
+            "reply" => "⚠️ Server connection failed: " . $curlErr
         ];
     }
 
-    $response = json_decode($result, true);
-
-    if (isset($response["candidates"][0]["content"]["parts"][0]["text"])) {
+    $res = json_decode($result, true);
+    if (isset($res["choices"][0]["message"]["content"])) {
         return [
             "success" => true,
-            "reply" => $response["candidates"][0]["content"]["parts"][0]["text"]
+            "reply" => $res["choices"][0]["message"]["content"]
         ];
     }
 
-    $googleError = $response["error"]["message"] ?? "Unknown Gemini API error.";
-
+    $errMsg = $res["error"]["message"] ?? "AI service temporarily unavailable.";
     return [
         "success" => false,
-        "retry" => false,
-        "code" => $httpCode,
-        "error" => $googleError
+        "reply" => "⚠️ " . $errMsg
     ];
 }
 
-/* =========================
-   GEMINI TTS FUNCTION
-========================= */
+/* =====================================================
+   STREAMING ENGINE (Server-Sent Events)
+   [MEMORY] tag ko live output me kabhi nahi dikhata — jaise hi
+   tag ka start detect hota hai, stream wahi se aage chup ho jaata hai.
+===================================================== */
 
-function callGeminiTTS($text, $apiKey) {
-    $model = "gemini-3.1-flash-tts-preview";
-    $url = "https://generativelanguage.googleapis.com/v1beta/models/" . $model . ":generateContent";
+function streamOpenRouterAndSave($apiKey, $contents, $systemInstruction, $userId, $db, $conversationId, $searchSources) {
+    header("Content-Type: text/event-stream");
+    header("Cache-Control: no-cache");
+    header("X-Accel-Buffering: no");
+    header("Connection: keep-alive");
+    while (ob_get_level() > 0) { @ob_end_flush(); }
+    @ini_set("zlib.output_compression", "0");
 
-    $data = [
-        "contents" => [
-            [
-                "parts" => [
-                    [
-                        "text" => "Speak naturally, clearly and smoothly. Use a friendly conversational Indian voice. Pronounce Hindi and English words clearly. Do not sound robotic.\n\nText to speak:\n" . $text
-                    ]
-                ]
-            ]
-        ],
-        "generationConfig" => [
-            "responseModalities" => ["AUDIO"],
-            "speechConfig" => [
-                "voiceConfig" => [
-                    "prebuiltVoiceConfig" => [
-                        "voiceName" => "Kore"
-                    ]
-                ],
-                "languageCode" => "hi-IN"
-            ]
-        ]
-    ];
+    $messages = array_merge(
+        [["role" => "system", "content" => $systemInstruction]],
+        $contents
+    );
 
-    $jsonData = json_encode($data, JSON_UNESCAPED_UNICODE);
+    $fullReply = "";
+    $sentText = "";
+    $memoryTagStarted = false;
+    $gotAnyContent = false;
 
-    $ch = curl_init($url);
-    curl_setopt($ch, CURLOPT_POST, true);
-    curl_setopt($ch, CURLOPT_HTTPHEADER, [
-        "Content-Type: application/json",
-        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36",
-        "x-goog-api-key: " . $apiKey
-    ]);
-    curl_setopt($ch, CURLOPT_POSTFIELDS, $jsonData);
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    $emit = function ($textChunk) {
+        if ($textChunk === "") return;
+        echo "data: " . json_encode(["delta" => $textChunk], JSON_UNESCAPED_UNICODE) . "\n\n";
+        @ob_flush();
+        @flush();
+    };
 
-    if (file_exists(__DIR__ . "/cacert.pem")) {
-        curl_setopt($ch, CURLOPT_CAINFO, __DIR__ . "/cacert.pem");
-    } else {
+    $processDelta = function ($delta) use (&$fullReply, &$sentText, &$memoryTagStarted, $emit) {
+        $fullReply .= $delta;
+        if ($memoryTagStarted) return;
+
+        $unsent = substr($fullReply, strlen($sentText));
+        $tagPos = strpos($unsent, "[MEMORY]");
+
+        if ($tagPos !== false) {
+            $safePart = substr($unsent, 0, $tagPos);
+            if ($safePart !== "") { $emit($safePart); $sentText .= $safePart; }
+            $memoryTagStarted = true;
+            return;
+        }
+
+        // Last ~15 chars hold back karo — taaki "[MEMORY]" tag chunk-boundary
+        // pe split ho to bhi kabhi screen pe flash na ho.
+        $holdBack = 15;
+        if (strlen($unsent) > $holdBack) {
+            $safePart = substr($unsent, 0, strlen($unsent) - $holdBack);
+            $emit($safePart);
+            $sentText .= $safePart;
+        }
+    };
+
+    $runStream = function ($model, $maxTokens) use ($apiKey, $messages, $processDelta, &$gotAnyContent) {
+        $lineBuffer = "";
+        $writeCallback = function ($ch, $data) use (&$lineBuffer, $processDelta, &$gotAnyContent) {
+            $lineBuffer .= $data;
+            $lines = explode("\n", $lineBuffer);
+            $lineBuffer = array_pop($lines);
+
+            foreach ($lines as $line) {
+                $line = trim($line);
+                if ($line === "" || strpos($line, "data:") !== 0) continue;
+                $jsonPart = trim(substr($line, 5));
+                if ($jsonPart === "[DONE]") continue;
+                $obj = json_decode($jsonPart, true);
+                if (isset($obj["choices"][0]["delta"]["content"])) {
+                    $gotAnyContent = true;
+                    $processDelta($obj["choices"][0]["delta"]["content"]);
+                }
+            }
+            return strlen($data);
+        };
+
+        $ch = curl_init("https://openrouter.ai/api/v1/chat/completions");
+        curl_setopt($ch, CURLOPT_POST, true);
+        curl_setopt($ch, CURLOPT_HTTPHEADER, [
+            "Content-Type: application/json",
+            "Authorization: Bearer " . trim($apiKey),
+            "HTTP-Referer: http://127.1.1.0:8080",
+            "X-Title: LEPSA AI"
+        ]);
+        curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode([
+            "model" => $model,
+            "messages" => $messages,
+            "temperature" => 0.65,
+            "max_tokens" => $maxTokens,
+            "stream" => true
+        ]));
+        curl_setopt($ch, CURLOPT_WRITEFUNCTION, $writeCallback);
         curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
         curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 0);
+        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 12);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 45);
+        curl_exec($ch);
+        curl_close($ch);
+    };
+
+    // Primary: Gemini 2.0 Flash (streaming)
+    $runStream("google/gemini-2.0-flash-exp:free", 1500);
+
+    // Kuch bhi nahi mila to fallback model bhi stream karke try karo
+    if (!$gotAnyContent) {
+        $runStream("gemini-2.5-flash", 1200);
     }
 
-    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 15);
-    curl_setopt($ch, CURLOPT_TIMEOUT, 60);
-
-    $result = curl_exec($ch);
-    $curlError = curl_error($ch);
-    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    curl_close($ch);
-
-    if ($result === false) {
-        return [
-            "success" => false,
-            "error" => $curlError
-        ];
+    // Agar fir bhi kuch nahi mila
+    if (!$gotAnyContent) {
+        $errMsg = "⚠️ AI service temporarily unavailable.";
+        $emit($errMsg);
+        $fullReply = $errMsg;
+        $sentText = $errMsg;
     }
 
-    $response = json_decode($result, true);
-    $audio = $response["candidates"][0]["content"]["parts"][0]["inlineData"]["data"] ?? null;
-
-    if (!$audio) {
-        $errorMessage = $response["error"]["message"] ?? "Unknown TTS error.";
-        return [
-            "success" => false,
-            "code" => $httpCode,
-            "error" => $errorMessage
-        ];
+    // Bacha hua safe text (holdBack wala) flush kar do
+    if (!$memoryTagStarted) {
+        $unsent = substr($fullReply, strlen($sentText));
+        if ($unsent !== "") { $emit($unsent); $sentText .= $unsent; }
     }
 
-    return [
-        "success" => true,
-        "audio" => $audio,
-        "mimeType" => "audio/pcm;rate=24000"
-    ];
-}
-
-/* =========================
-   CALL GEMINI WITH FALLBACK
-========================= */
-
-$lastResult = null;
-
-foreach ($models as $model) {
-    for ($attempt = 0; $attempt < 2; $attempt++) {
-        $result = callGemini($model, $apiKey, $contents, $systemInstruction);
-        $lastResult = $result;
-
-        if ($result["success"]) {
-            echo json_encode([
-                "success" => true,
-                "reply" => $result["reply"]
-            ], JSON_UNESCAPED_UNICODE);
-            exit;
-        }
-
-        $code = $result["code"] ?? 0;
-
-        if ($code == 429 || $code == 500 || $code == 502 || $code == 503 || $code == 504) {
-            if ($attempt === 0) {
-                sleep(1);
-                continue;
+    // ---- Ab poora clean reply nikaalo (MEMORY tag stripped) ----
+    $cleanReply = $fullReply;
+    if (preg_match_all('/\[MEMORY\](.*?)\[\/MEMORY\]/is', $fullReply, $matches)) {
+        if ($userId && $db && !empty($matches[1])) {
+            $insertStmt = @$db->prepare("INSERT INTO memories (user_id, fact) VALUES (:uid, :fact)");
+            if ($insertStmt) {
+                foreach ($matches[1] as $newFact) {
+                    $newFact = trim(mb_substr(trim($newFact), 0, 200, "UTF-8"));
+                    if ($newFact === "") continue;
+                    $insertStmt->bindValue(":uid", $userId, SQLITE3_INTEGER);
+                    $insertStmt->bindValue(":fact", $newFact, SQLITE3_TEXT);
+                    @$insertStmt->execute();
+                    $insertStmt->reset();
+                }
             }
-            break;
         }
-        break;
+        $cleanReply = trim(preg_replace('/\[MEMORY\](.*?)\[\/MEMORY\]/is', '', $fullReply));
+    }
+
+    if ($conversationId && $db && $cleanReply !== "") {
+        $saveBotMsg = @$db->prepare("INSERT INTO chat_messages (conversation_id, role, content) VALUES (:cid, 'assistant', :content)");
+        if ($saveBotMsg) {
+            $saveBotMsg->bindValue(":cid", $conversationId, SQLITE3_INTEGER);
+            $saveBotMsg->bindValue(":content", $cleanReply, SQLITE3_TEXT);
+            @$saveBotMsg->execute();
+        }
+    }
+
+    if ($userId && $db && $cleanReply !== "") {
+        try {
+            @$db->exec("UPDATE users SET credits = credits - 1 WHERE id = " . intval($userId) . " AND credits > 0");
+        } catch (Exception $ex) {}
+    }
+
+    // Final meta event — conversation_id, sources, poora clean text (frontend
+    // history array ke liye) — stream khatam hone ke baad.
+    echo "data: " . json_encode([
+        "meta" => true,
+        "conversation_id" => $conversationId,
+        "sources" => $searchSources,
+        "full_reply" => $cleanReply
+    ], JSON_UNESCAPED_UNICODE) . "\n\n";
+    @ob_flush(); @flush();
+
+    echo "data: [DONE]\n\n";
+    @ob_flush(); @flush();
+}
+
+/* =====================================================
+   EXECUTE, DEDUCT CREDIT & RETURN JSON
+===================================================== */
+
+if (!$isVoiceMode) {
+    // TEXT CHAT: real-time streaming (Step 3)
+    streamOpenRouterAndSave($openRouterKey, $contents, $systemInstruction, $userId, $db, $conversationId, $searchSources);
+    exit;
+}
+
+// VOICE MODE: poora reply ek saath chahiye (TTS ke liye), isliye streaming nahi
+$response = callOpenRouter($openRouterKey, $contents, $systemInstruction);
+
+// ---- MEMORY: naye facts save karo, aur tag ko reply se hata do ----
+if (!empty($response["reply"])) {
+    if (preg_match_all('/\[MEMORY\](.*?)\[\/MEMORY\]/is', $response["reply"], $matches)) {
+        if ($userId && $db && !empty($matches[1])) {
+            $insertStmt = @$db->prepare("INSERT INTO memories (user_id, fact) VALUES (:uid, :fact)");
+            if ($insertStmt) {
+                foreach ($matches[1] as $newFact) {
+                    $newFact = trim(mb_substr(trim($newFact), 0, 200, "UTF-8"));
+                    if ($newFact === "") continue;
+                    $insertStmt->bindValue(":uid", $userId, SQLITE3_INTEGER);
+                    $insertStmt->bindValue(":fact", $newFact, SQLITE3_TEXT);
+                    @$insertStmt->execute();
+                    $insertStmt->reset();
+                }
+            }
+        }
+        $response["reply"] = trim(preg_replace('/\[MEMORY\](.*?)\[\/MEMORY\]/is', '', $response["reply"]));
     }
 }
 
-/* =========================
-   FINAL ERROR
-========================= */
-
-$code = $lastResult["code"] ?? 0;
-$error = $lastResult["error"] ?? "Unknown Gemini API error.";
-
-if ($code == 400) {
-    $reply = "⚠️ Gemini request error.\n\n" . $error;
-} elseif ($code == 401) {
-    $reply = "⚠️ Gemini API key authentication failed.\n\n" . $error;
-} elseif ($code == 403) {
-    $reply = "⚠️ Gemini API access was denied.\n\n" . $error;
-} elseif ($code == 404) {
-    $reply = "⚠️ Gemini model or API endpoint was not found.\n\n" . $error;
-} elseif ($code == 429) {
-    $reply = "⚠️ Gemini API quota/rate limit reached.\n\n" . $error;
-} elseif ($code == 500 || $code == 502 || $code == 503 || $code == 504) {
-    $reply = "⚠️ Gemini is temporarily busy. Please try again in a moment.";
-} elseif ($code == 0) {
-    $reply = "⚠️ Server connection error.\n\n" . $error;
-} else {
-    $reply = "⚠️ Gemini API error (HTTP " . $code . ").\n\n" . $error;
+// ---- CONVERSATION HISTORY: AI ka reply bhi save kar do ----
+if ($conversationId && $db && !empty($response["reply"]) && ($response["success"] ?? false)) {
+    $saveBotMsg = @$db->prepare("INSERT INTO chat_messages (conversation_id, role, content) VALUES (:cid, 'assistant', :content)");
+    if ($saveBotMsg) {
+        $saveBotMsg->bindValue(":cid", $conversationId, SQLITE3_INTEGER);
+        $saveBotMsg->bindValue(":content", $response["reply"], SQLITE3_TEXT);
+        @$saveBotMsg->execute();
+    }
 }
 
-echo json_encode([
-    "success" => false,
-    "reply" => $reply,
-    "error" => $error,
-    "httpCode" => $code
-], JSON_UNESCAPED_UNICODE);
+if ($userId && $db && !empty($response["reply"]) && ($response["success"] ?? false)) {
+    try {
+        @$db->exec("UPDATE users SET credits = credits - 1 WHERE id = " . intval($userId) . " AND credits > 0");
+    } catch (Exception $ex) {}
+}
 
+$response["sources"] = $searchSources;
+$response["conversation_id"] = $conversationId;
+
+echo json_encode($response, JSON_UNESCAPED_UNICODE);
 exit;
