@@ -1,8 +1,20 @@
 <?php
-// LEPSA AI — Configuration
-// Render Environment Variables se dynamic key uthayega, warna fallback constant use karega
+/**
+ * LEPSA AI - Configuration Template
+ * 
+ * GitHub par upload karne ke liye demo file.
+ * Render ya live server par keys Environment Variables se load hongi.
+ */
 
-$envKey = getenv('GEMINI_API_KEY');
+// OpenRouter API Key (Llama / Text Engine)
+$openRouter = getenv('OPENROUTER_API_KEY') ?: 'YOUR_OPENROUTER_API_KEY_HERE';
 
-define('GEMINI_API_KEY', $envKey ? $envKey : "PASTE_NEW_GEMINI_API_KEY_HERE");
-?>
+// Gemini API Key (Alternative Core / Audio Engine)
+$gemini = getenv('GEMINI_API_KEY') ?: 'YOUR_GEMINI_API_KEY_HERE';
+
+// ElevenLabs API Key (Natural Voice Engine)
+$elevenLabs = getenv('ELEVENLABS_API_KEY') ?: 'YOUR_ELEVENLABS_API_KEY_HERE';
+
+define('OPENROUTER_API_KEY', $openRouter);
+define('GEMINI_API_KEY', $gemini);
+define('ELEVENLABS_API_KEY', $elevenLabs);
