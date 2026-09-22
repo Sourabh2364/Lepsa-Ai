@@ -2016,3 +2016,74 @@ body::after {
     from { transform: translateY(0); opacity: 1; }
     to { transform: translateY(14px); opacity: 0; }
 }
+
+/* =====================================================
+   TOOL USE: searching status + source citations
+===================================================== */
+.tool-status-line {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: #7fe9ff;
+    font-size: 13.5px;
+    font-weight: 600;
+    padding: 4px 0;
+}
+
+.tool-status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #00eaff;
+    box-shadow: 0 0 10px #00eaff;
+    animation: toolStatusPulse 0.9s ease-in-out infinite;
+    flex-shrink: 0;
+}
+
+@keyframes toolStatusPulse {
+    0%, 100% { opacity: 0.4; transform: scale(0.8); }
+    50% { opacity: 1; transform: scale(1.2); }
+}
+
+.sources-block {
+    margin-top: 14px;
+    padding-top: 12px;
+    border-top: 1px solid rgba(0, 217, 255, 0.15);
+}
+
+.sources-label {
+    font-size: 11.5px;
+    font-weight: 700;
+    color: #6b8894;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 8px;
+}
+
+.sources-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.source-chip {
+    display: inline-block;
+    max-width: 220px;
+    padding: 6px 12px;
+    border-radius: 20px;
+    background: rgba(0, 217, 255, 0.06);
+    border: 1px solid rgba(0, 217, 255, 0.25);
+    color: #a5f3fc;
+    font-size: 12px;
+    font-weight: 500;
+    text-decoration: none;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    transition: 0.2s;
+}
+
+.source-chip:hover {
+    background: rgba(0, 217, 255, 0.14);
+    border-color: rgba(0, 217, 255, 0.45);
+}

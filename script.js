@@ -153,6 +153,8 @@ async function sendMessage() {
         let liveText = "";
         let finalCleanReply = "";
         let gotMeta = false;
+        let sources = [];
+        let sawFirstDelta = false;
 
         while (true) {
             const { done, value } = await reader.read();
@@ -171,9 +173,13 @@ async function sendMessage() {
                 let obj;
                 try { obj = JSON.parse(payload); } catch (e) { continue; }
 
-                if (obj.meta) {
+                if (obj.status) {
+                    botDiv.innerHTML = '<div class="tool-status-line"><span class="tool-status-dot"></span>' + obj.status + '</div>';
+                    messages.scrollTop = messages.scrollHeight;
+                } else if (obj.meta) {
                     gotMeta = true;
                     finalCleanReply = obj.full_reply || liveText;
+                    sources = obj.sources || [];
                     if (obj.conversation_id) {
                         const isNewConversation = currentConversationId !== obj.conversation_id;
                         currentConversationId = obj.conversation_id;
@@ -181,6 +187,7 @@ async function sendMessage() {
                         if (isNewConversation) loadConversationList();
                     }
                 } else if (obj.delta) {
+                    sawFirstDelta = true;
                     liveText += obj.delta;
                     botDiv.innerHTML = formatAIResponse(liveText) + '<span class="typing-cursor">●</span>';
                     messages.scrollTop = messages.scrollHeight;
@@ -192,6 +199,9 @@ async function sendMessage() {
         if (finalText) {
             chatHistory.push({ role: "model", text: finalText, type: "bot" });
             botDiv.innerHTML = formatAIResponse(finalText);
+            if (sources && sources.length > 0) {
+                botDiv.appendChild(buildSourcesBlock(sources));
+            }
             finalizeMessageElement(botDiv);
         } else {
             botDiv.innerHTML = "⚠️ Server returned empty response.";
@@ -200,6 +210,31 @@ async function sendMessage() {
         botDiv.innerHTML = "⚠️ Network/Fetch Error: " + err.message;
     }
     messages.scrollTop = messages.scrollHeight;
+}
+
+function buildSourcesBlock(sources) {
+    const wrap = document.createElement("div");
+    wrap.className = "sources-block";
+
+    const label = document.createElement("div");
+    label.className = "sources-label";
+    label.textContent = "🔍 Sources";
+    wrap.appendChild(label);
+
+    const list = document.createElement("div");
+    list.className = "sources-list";
+    sources.forEach(function (src) {
+        const chip = document.createElement("a");
+        chip.className = "source-chip";
+        chip.href = src.url || "#";
+        chip.target = "_blank";
+        chip.rel = "noopener noreferrer";
+        chip.textContent = src.title || src.url || "Source";
+        list.appendChild(chip);
+    });
+    wrap.appendChild(list);
+
+    return wrap;
 }
 
 
@@ -237,6 +272,7 @@ function addMessage(text, type, typing) {
 
     messages.appendChild(div);
     messages.scrollTop = messages.scrollHeight;
+    return div;
 }
 
 function finalizeMessageElement(element, callback) {
@@ -640,6 +676,7 @@ function setLEPSAStatus(text) {
 let lepsaVoiceActive = false;
 let lepsaRecognizer = null;
 let isVoiceSending = false;
+let voiceWatchdogTimer = null;
 let voiceMuted = false;
 let bargeInRecognizer = null;
 
@@ -682,6 +719,27 @@ function updateVoiceModalStatus(status, text) {
     }
 }
 
+/* =========================================================
+   WATCHDOG: agar "Listening" state me kuch der (9s) tak kuch na ho
+   (na result, na error, na restart) — chahe koi bhi silent reason ho —
+   mic ko force restart kar do. Ye Gemini/GPT jaisi reliability deta hai.
+   ========================================================= */
+function armVoiceWatchdog() {
+    clearVoiceWatchdog();
+    voiceWatchdogTimer = setTimeout(() => {
+        if (lepsaVoiceActive && !isVoiceSending && (!currentAudio || currentAudio.paused)) {
+            try { startLEPSAVoice(); } catch (e) {}
+        }
+    }, 9000);
+}
+
+function clearVoiceWatchdog() {
+    if (voiceWatchdogTimer) {
+        clearTimeout(voiceWatchdogTimer);
+        voiceWatchdogTimer = null;
+    }
+}
+
 function startLEPSAVoice() {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRecognition) return;
@@ -690,6 +748,7 @@ function startLEPSAVoice() {
     lepsaVoiceActive = true;
     isVoiceSending = false;
     setLEPSAStatus("Listening...");
+    armVoiceWatchdog();
 
     if (lepsaRecognizer) {
         try {
@@ -721,10 +780,29 @@ function startLEPSAVoice() {
     };
 
     lepsaRecognizer.onerror = function (event) {
-        if (event.error === "no-speech" && lepsaVoiceActive && !isVoiceSending) {
+        const err = event.error;
+
+        if (err === "not-allowed" || err === "service-not-allowed") {
+            updateVoiceModalStatus("Mic blocked", "Mic permission denied hai — Chrome settings me allow karo.");
+            lepsaVoiceActive = false;
+            return;
+        }
+
+        if (err === "audio-capture") {
+            updateVoiceModalStatus("No mic found", "Koi microphone nahi mila.");
+            return;
+        }
+
+        // no-speech / aborted / network — retry karo, ye normal hai
+        if (lepsaVoiceActive && !isVoiceSending) {
+            updateVoiceModalStatus("Listening...", "(" + err + ") — dobara try kar raha hu...");
             setTimeout(() => {
                 if (lepsaVoiceActive && !isVoiceSending) {
-                    try { lepsaRecognizer.start(); } catch (e) {}
+                    try {
+                        lepsaRecognizer.start();
+                    } catch (e) {
+                        updateVoiceModalStatus("Error", "Restart fail: " + e.message);
+                    }
                 }
             }, 600);
         }
@@ -740,7 +818,11 @@ function startLEPSAVoice() {
         } else if (lepsaVoiceActive) {
             setTimeout(() => {
                 if (lepsaVoiceActive && !isVoiceSending) {
-                    try { lepsaRecognizer.start(); } catch (e) {}
+                    try {
+                        lepsaRecognizer.start();
+                    } catch (e) {
+                        updateVoiceModalStatus("Error", "Restart fail: " + e.message);
+                    }
                 }
             }, 400);
         }
@@ -748,12 +830,15 @@ function startLEPSAVoice() {
 
     try {
         lepsaRecognizer.start();
-    } catch (e) {}
+    } catch (e) {
+        updateVoiceModalStatus("Error", "Mic start fail: " + e.message);
+    }
 }
 
 async function executeVoicePrompt(text) {
     if (!text.trim() || isVoiceSending) return;
     isVoiceSending = true;
+    clearVoiceWatchdog();
 
     if (lepsaRecognizer) {
         try {
@@ -794,6 +879,7 @@ async function executeVoicePrompt(text) {
 
         addMessage(reply, "bot", false);
         chatHistory.push({ role: "model", text: reply, type: "bot" });
+        isVoiceSending = false; // reply mil gaya — agle turn ke liye mic dobara arm karo
 
         updateVoiceModalStatus("Speaking...", reply);
         speakNaturalVoice(reply);
@@ -813,6 +899,7 @@ async function executeVoicePrompt(text) {
 function stopLEPSAVoice() {
     lepsaVoiceActive = false;
     isVoiceSending = false;
+    clearVoiceWatchdog();
     stopBargeInListener();
     stopCurrentAudio();
     if (lepsaRecognizer) {
@@ -928,6 +1015,75 @@ window.triggerVoiceCamera = function () {
     }, 300);
 };
 
+window.triggerDocumentUpload = function () {
+    const popup = document.getElementById("lepsaAttachPopup");
+    if (popup) popup.classList.remove("show");
+    const input = document.getElementById("documentInput");
+    if (input) input.click();
+};
+
+window.handleDocumentSelected = async function (input) {
+    if (!input.files || !input.files[0]) return;
+    const file = input.files[0];
+
+    if (file.size > 5 * 1024 * 1024) {
+        lepsaToast("File 5MB se badi hai — chhoti file try karo.");
+        input.value = "";
+        return;
+    }
+
+    const messages = document.getElementById("messages");
+    const welcomeMsg = document.getElementById("defaultWelcomeMessage");
+    if (welcomeMsg) welcomeMsg.remove();
+    const chips = document.getElementById("suggestionChips");
+    if (chips) chips.remove();
+
+    const statusDiv = addMessage("📄 " + file.name + " upload ho raha hai...", "bot", false);
+
+    const reader = new FileReader();
+    reader.onload = async function (e) {
+        const base64 = e.target.result.split(",")[1];
+
+        try {
+            const res = await fetch("chat.php", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    action: "upload_document",
+                    filename: file.name,
+                    file: base64,
+                    conversation_id: currentConversationId
+                })
+            });
+            const data = await res.json();
+
+            if (data.success) {
+                if (data.conversation_id) {
+                    const isNewConversation = currentConversationId !== data.conversation_id;
+                    currentConversationId = data.conversation_id;
+                    localStorage.setItem("lepsaLastConversationId", currentConversationId);
+                    if (isNewConversation) loadConversationList();
+                }
+                updateBotMessage(statusDiv, "📄 **" + file.name + "** upload ho gayi. Ab isi file ke baare me kuch bhi pooch sakte ho.");
+                lepsaToast("Document ready — ab isse related sawaal pucho.");
+            } else {
+                updateBotMessage(statusDiv, "⚠️ " + (data.message || "Document process nahi ho payi."));
+            }
+        } catch (err) {
+            updateBotMessage(statusDiv, "⚠️ Upload fail: " + err.message);
+        }
+        messages.scrollTop = messages.scrollHeight;
+    };
+    reader.readAsDataURL(file);
+    input.value = "";
+};
+
+function updateBotMessage(element, text) {
+    if (!element) return;
+    element.innerHTML = formatAIResponse(text);
+    finalizeMessageElement(element);
+}
+
 window.triggerVoiceUpload = function () {
     closeVoiceMode();
     setTimeout(() => {
@@ -954,11 +1110,20 @@ function onSpeechFinished() {
     setLEPSAStatus("Online");
 
     if (lepsaVoiceActive && !isVoiceSending) {
+        updateVoiceModalStatus("Listening...", "Mic dobara start ho raha hai...");
         setTimeout(() => {
             if (lepsaVoiceActive && !isVoiceSending) {
-                try { startLEPSAVoice(); } catch (e) {}
+                try {
+                    startLEPSAVoice();
+                } catch (e) {
+                    updateVoiceModalStatus("Error", "Auto-restart fail: " + e.message);
+                }
             }
         }, 300);
+    } else if (!lepsaVoiceActive) {
+        updateVoiceModalStatus("Stopped", "Voice mode band hai (lepsaVoiceActive = false).");
+    } else if (isVoiceSending) {
+        updateVoiceModalStatus("Stuck", "isVoiceSending abhi bhi true hai — restart nahi ho raha.");
     }
 }
 

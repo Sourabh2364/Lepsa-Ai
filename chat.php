@@ -76,6 +76,18 @@ if ($userId && file_exists($dbFile)) {
             )
         ");
 
+        // ---- RAG: uploaded documents (per conversation) ----
+        $db->exec("
+            CREATE TABLE IF NOT EXISTS documents (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                conversation_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                filename TEXT NOT NULL,
+                content TEXT NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        ");
+
         // ---- MEMORY: is user ki purani saved facts load karo ----
         $memStmt = @$db->prepare("SELECT fact FROM memories WHERE user_id = :id ORDER BY id DESC LIMIT 40");
         if ($memStmt) {
@@ -319,6 +331,135 @@ if (($input["action"] ?? "") === "rename_conversation") {
 }
 
 /* =====================================================
+   RAG: document text extraction (no external libraries)
+===================================================== */
+
+function extractTextFromPdf($bytes) {
+    $text = "";
+    if (preg_match_all('/stream\r?\n(.*?)\r?\nendstream/s', $bytes, $matches)) {
+        foreach ($matches[1] as $streamData) {
+            $decoded = @gzuncompress($streamData);
+            if ($decoded === false) $decoded = @gzinflate($streamData);
+            if ($decoded === false) $decoded = $streamData;
+
+            // PDF text-show operators: (text) Tj  and [(text)(text)...] TJ
+            if (preg_match_all('/\((?:[^()\\\\]|\\\\.)*\)/', $decoded, $tMatches)) {
+                foreach ($tMatches[0] as $chunk) {
+                    $clean = substr($chunk, 1, -1);
+                    $clean = str_replace(['\\(', '\\)', '\\\\'], ['(', ')', '\\'], $clean);
+                    $text .= $clean . " ";
+                }
+            }
+        }
+    }
+    return trim(preg_replace('/\s+/', ' ', $text));
+}
+
+function extractTextFromDocx($bytes) {
+    $text = "";
+    if (!class_exists("ZipArchive")) return "";
+
+    $tmpFile = tempnam(sys_get_temp_dir(), "lepsa_docx_");
+    file_put_contents($tmpFile, $bytes);
+
+    $zip = new ZipArchive();
+    if ($zip->open($tmpFile) === true) {
+        $xml = $zip->getFromName("word/document.xml");
+        $zip->close();
+        if ($xml !== false) {
+            $xml = preg_replace('/<\/w:p>/', "\n", $xml);
+            $text = strip_tags($xml);
+            $text = html_entity_decode($text, ENT_QUOTES, "UTF-8");
+        }
+    }
+    @unlink($tmpFile);
+    return trim(preg_replace('/[ \t]+/', ' ', $text));
+}
+
+if (($input["action"] ?? "") === "upload_document") {
+    if (!$userId || !$db) {
+        echo json_encode(["success" => false, "message" => "Document upload ke liye login zaroori hai."]);
+        exit;
+    }
+
+    $filename = trim($input["filename"] ?? "document");
+    $fileBase64 = $input["file"] ?? "";
+    $reqConvId = intval($input["conversation_id"] ?? 0);
+
+    if ($fileBase64 === "") {
+        echo json_encode(["success" => false, "message" => "File data missing."]);
+        exit;
+    }
+
+    $fileBytes = base64_decode($fileBase64, true);
+    if ($fileBytes === false) {
+        echo json_encode(["success" => false, "message" => "Invalid file data."]);
+        exit;
+    }
+
+    if (strlen($fileBytes) > 5 * 1024 * 1024) {
+        echo json_encode(["success" => false, "message" => "File 5MB se bada hai — chhoti file try karo."]);
+        exit;
+    }
+
+    $lowerName = strtolower($filename);
+    if (strpos($lowerName, ".pdf") !== false) {
+        $extractedText = extractTextFromPdf($fileBytes);
+    } elseif (strpos($lowerName, ".docx") !== false) {
+        $extractedText = extractTextFromDocx($fileBytes);
+    } else {
+        $extractedText = mb_convert_encoding($fileBytes, "UTF-8", "UTF-8, ISO-8859-1, Windows-1252");
+    }
+
+    $extractedText = trim($extractedText);
+    if ($extractedText === "") {
+        echo json_encode(["success" => false, "message" => "Is file se text nahi mil paya — scanned/image PDF ho sakta hai (OCR support nahi hai abhi)."]);
+        exit;
+    }
+
+    // System prompt bahut bada na ho jaaye isliye cap laga do
+    $extractedText = mb_substr($extractedText, 0, 12000, "UTF-8");
+
+    $convId = $reqConvId;
+    if ($convId > 0) {
+        $ownStmt = @$db->prepare("SELECT id FROM conversations WHERE id = :cid AND user_id = :uid LIMIT 1");
+        $ownStmt->bindValue(":cid", $convId, SQLITE3_INTEGER);
+        $ownStmt->bindValue(":uid", $userId, SQLITE3_INTEGER);
+        $ownRes = $ownStmt->execute();
+        if (!$ownRes || !$ownRes->fetchArray(SQLITE3_ASSOC)) $convId = 0;
+    }
+    if ($convId <= 0) {
+        $titleStmt = @$db->prepare("INSERT INTO conversations (user_id, title) VALUES (:uid, :title)");
+        $titleStmt->bindValue(":uid", $userId, SQLITE3_INTEGER);
+        $titleStmt->bindValue(":title", mb_substr($filename, 0, 40, "UTF-8"));
+        $titleStmt->execute();
+        $convId = $db->lastInsertRowID();
+    }
+
+    $insertDoc = @$db->prepare("INSERT INTO documents (conversation_id, user_id, filename, content) VALUES (:cid, :uid, :fn, :content)");
+    $insertDoc->bindValue(":cid", $convId, SQLITE3_INTEGER);
+    $insertDoc->bindValue(":uid", $userId, SQLITE3_INTEGER);
+    $insertDoc->bindValue(":fn", $filename, SQLITE3_TEXT);
+    $insertDoc->bindValue(":content", $extractedText, SQLITE3_TEXT);
+    $insertDoc->execute();
+
+    $sysNote = "📄 Document uploaded: " . $filename;
+    $saveMsg = @$db->prepare("INSERT INTO chat_messages (conversation_id, role, content) VALUES (:cid, 'assistant', :content)");
+    $saveMsg->bindValue(":cid", $convId, SQLITE3_INTEGER);
+    $saveMsg->bindValue(":content", $sysNote, SQLITE3_TEXT);
+    $saveMsg->execute();
+    @$db->exec("UPDATE conversations SET updated_at = CURRENT_TIMESTAMP WHERE id = " . intval($convId));
+
+    echo json_encode([
+        "success" => true,
+        "conversation_id" => $convId,
+        "filename" => $filename,
+        "preview" => mb_substr($extractedText, 0, 150, "UTF-8") . "..."
+    ], JSON_UNESCAPED_UNICODE);
+    exit;
+}
+
+/* =====================================================
    OPENROUTER KEY VALIDATION
 ===================================================== */
 
@@ -395,8 +536,9 @@ Only do this for genuinely new, important, durable facts. Do NOT do this for cas
 
 function fetchWebResults($query) {
     $cleanQuery = urlencode(trim($query));
-    $url = "https://api.duckduckgo.com/?q={$cleanQuery}&format=json&no_html=1&skip_disambig=1";
 
+    // Attempt 1: DuckDuckGo Instant Answer (fast, structured, often empty)
+    $url = "https://api.duckduckgo.com/?q={$cleanQuery}&format=json&no_html=1&skip_disambig=1";
     $ch = curl_init($url);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
@@ -405,41 +547,76 @@ function fetchWebResults($query) {
     $res = curl_exec($ch);
     curl_close($ch);
 
-    if (!$res) return ["context" => "", "sources" => []];
-
-    $data = json_decode($res, true);
     $context = "";
     $sources = [];
 
-    if (!empty($data["AbstractText"])) {
-        $context .= $data["AbstractText"] . "\n";
-        if (!empty($data["AbstractURL"])) {
-            $sources[] = [
-                "title" => $data["Heading"] ?: "Primary Source",
-                "url" => $data["AbstractURL"]
-            ];
+    if ($res) {
+        $data = json_decode($res, true);
+        if (!empty($data["AbstractText"])) {
+            $context .= $data["AbstractText"] . "\n";
+            if (!empty($data["AbstractURL"])) {
+                $sources[] = ["title" => $data["Heading"] ?: "Source", "url" => $data["AbstractURL"]];
+            }
         }
-    }
-
-    if (!empty($data["RelatedTopics"]) && is_array($data["RelatedTopics"])) {
-        $count = 0;
-        foreach ($data["RelatedTopics"] as $topic) {
-            if (isset($topic["Text"]) && isset($topic["FirstURL"])) {
-                $context .= "- " . $topic["Text"] . "\n";
-                $sources[] = [
-                    "title" => mb_substr($topic["Text"], 0, 30) . "...",
-                    "url" => $topic["FirstURL"]
-                ];
-                $count++;
-                if ($count >= 3) break;
+        if (!empty($data["RelatedTopics"]) && is_array($data["RelatedTopics"])) {
+            $count = 0;
+            foreach ($data["RelatedTopics"] as $topic) {
+                if (isset($topic["Text"]) && isset($topic["FirstURL"])) {
+                    $context .= "- " . $topic["Text"] . "\n";
+                    $sources[] = ["title" => mb_substr($topic["Text"], 0, 40) . "...", "url" => $topic["FirstURL"]];
+                    $count++;
+                    if ($count >= 3) break;
+                }
             }
         }
     }
 
-    return [
-        "context" => trim($context),
-        "sources" => $sources
-    ];
+    // Attempt 2: agar Instant Answer khaali aaya, DuckDuckGo HTML results try karo
+    // (ye zyada queries ke liye kaam karta hai — sports scores, current events, etc.)
+    if (trim($context) === "") {
+        $htmlUrl = "https://html.duckduckgo.com/html/?q=" . $cleanQuery;
+        $ch2 = curl_init($htmlUrl);
+        curl_setopt($ch2, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch2, CURLOPT_SSL_VERIFYPEER, false);
+        curl_setopt($ch2, CURLOPT_TIMEOUT, 8);
+        curl_setopt($ch2, CURLOPT_USERAGENT, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
+        $html = curl_exec($ch2);
+        curl_close($ch2);
+
+        if ($html) {
+            // Result snippets nikaalo
+            if (preg_match_all('/class="result__snippet"[^>]*>(.*?)<\/a>/is', $html, $snippetMatches)) {
+                $count = 0;
+                foreach ($snippetMatches[1] as $snippet) {
+                    $clean = trim(strip_tags(html_entity_decode($snippet)));
+                    if ($clean !== "") {
+                        $context .= "- " . $clean . "\n";
+                        $count++;
+                        if ($count >= 4) break;
+                    }
+                }
+            }
+            // Result titles + links nikaalo (sources ke liye)
+            if (preg_match_all('/class="result__a"[^>]*href="([^"]+)"[^>]*>(.*?)<\/a>/is', $html, $linkMatches)) {
+                $count = 0;
+                for ($i = 0; $i < count($linkMatches[1]); $i++) {
+                    $rawUrl = $linkMatches[1][$i];
+                    // DuckDuckGo redirect URL se asli URL nikaalo
+                    if (preg_match('/uddg=([^&]+)/', $rawUrl, $m)) {
+                        $rawUrl = urldecode($m[1]);
+                    }
+                    $title = trim(strip_tags(html_entity_decode($linkMatches[2][$i])));
+                    if ($title !== "" && $rawUrl !== "") {
+                        $sources[] = ["title" => mb_substr($title, 0, 60, "UTF-8"), "url" => $rawUrl];
+                        $count++;
+                        if ($count >= 4) break;
+                    }
+                }
+            }
+        }
+    }
+
+    return ["context" => trim($context), "sources" => $sources];
 }
 
 /* =====================================================
@@ -498,25 +675,43 @@ if ($userId && $db) {
         }
         @$db->exec("UPDATE conversations SET updated_at = CURRENT_TIMESTAMP WHERE id = " . intval($conversationId));
     }
-}
 
-$searchSources = [];
-$searchTriggers = ['latest', 'aaj', 'today', 'current', 'news', 'update', 'price', 'rate', 'who is', 'kon hai', 'kab'];
-$needsSearch = false;
-$lowerMsg = strtolower($message);
-
-foreach ($searchTriggers as $trig) {
-    if (strpos($lowerMsg, $trig) !== false) {
-        $needsSearch = true;
-        break;
+    // ---- RAG: is conversation me koi document uploaded hai to uska content do ----
+    if ($conversationId) {
+        $docStmt = @$db->prepare("SELECT filename, content FROM documents WHERE conversation_id = :cid ORDER BY id DESC");
+        if ($docStmt) {
+            $docStmt->bindValue(":cid", $conversationId, SQLITE3_INTEGER);
+            $docRes = $docStmt->execute();
+            if ($docRes) {
+                while ($doc = $docRes->fetchArray(SQLITE3_ASSOC)) {
+                    $systemInstruction .= "\n\nUPLOADED DOCUMENT (\"" . $doc["filename"] . "\") — answer the user's questions based on this content when relevant:\n---\n" . $doc["content"] . "\n---";
+                }
+            }
+        }
     }
 }
 
-if ($needsSearch) {
-    $webData = fetchWebResults($message);
-    if (!empty($webData["context"])) {
-        $systemInstruction .= "\n\nLIVE WEB CONTEXT:\n" . $webData["context"] . "\nUse this up-to-date web information to answer.";
-        $searchSources = $webData["sources"];
+$searchSources = [];
+
+if ($isVoiceMode) {
+    // Voice mode: simple keyword-trigger pre-search (short conversational queries)
+    $searchTriggers = ['latest', 'aaj', 'today', 'current', 'news', 'update', 'price', 'rate', 'who is', 'kon hai', 'kab', 'score', 'kitna'];
+    $needsSearch = false;
+    $lowerMsg = strtolower($message);
+
+    foreach ($searchTriggers as $trig) {
+        if (strpos($lowerMsg, $trig) !== false) {
+            $needsSearch = true;
+            break;
+        }
+    }
+
+    if ($needsSearch) {
+        $webData = fetchWebResults($message);
+        if (!empty($webData["context"])) {
+            $systemInstruction .= "\n\nLIVE WEB CONTEXT:\n" . $webData["context"] . "\nUse this up-to-date web information to answer.";
+            $searchSources = $webData["sources"];
+        }
     }
 }
 
@@ -677,14 +872,37 @@ function streamOpenRouterAndSave($apiKey, $contents, $systemInstruction, $userId
         $contents
     );
 
+    $tools = [[
+        "type" => "function",
+        "function" => [
+            "name" => "search_web",
+            "description" => "Search the live web for current, up-to-date, or real-time information — news, prices, scores, recent events, release dates, or any fact that may have changed since your training or that you are not confident about. Use whenever the user's question needs fresh information.",
+            "parameters" => [
+                "type" => "object",
+                "properties" => [
+                    "query" => ["type" => "string", "description" => "The search query, in the user's language."]
+                ],
+                "required" => ["query"]
+            ]
+        ]
+    ]];
+
     $fullReply = "";
     $sentText = "";
     $memoryTagStarted = false;
     $gotAnyContent = false;
+    $toolCallsAccum = [];
+    $finishReason = null;
 
     $emit = function ($textChunk) {
         if ($textChunk === "") return;
         echo "data: " . json_encode(["delta" => $textChunk], JSON_UNESCAPED_UNICODE) . "\n\n";
+        @ob_flush();
+        @flush();
+    };
+
+    $emitStatus = function ($status) {
+        echo "data: " . json_encode(["status" => $status], JSON_UNESCAPED_UNICODE) . "\n\n";
         @ob_flush();
         @flush();
     };
@@ -713,9 +931,9 @@ function streamOpenRouterAndSave($apiKey, $contents, $systemInstruction, $userId
         }
     };
 
-    $runStream = function ($model, $maxTokens) use ($apiKey, $messages, $processDelta, &$gotAnyContent) {
+    $runStream = function ($model, $maxTokens, $withTools) use ($apiKey, &$messages, $tools, $processDelta, &$gotAnyContent, &$toolCallsAccum, &$finishReason) {
         $lineBuffer = "";
-        $writeCallback = function ($ch, $data) use (&$lineBuffer, $processDelta, &$gotAnyContent) {
+        $writeCallback = function ($ch, $data) use (&$lineBuffer, $processDelta, &$gotAnyContent, &$toolCallsAccum, &$finishReason) {
             $lineBuffer .= $data;
             $lines = explode("\n", $lineBuffer);
             $lineBuffer = array_pop($lines);
@@ -726,13 +944,48 @@ function streamOpenRouterAndSave($apiKey, $contents, $systemInstruction, $userId
                 $jsonPart = trim(substr($line, 5));
                 if ($jsonPart === "[DONE]") continue;
                 $obj = json_decode($jsonPart, true);
-                if (isset($obj["choices"][0]["delta"]["content"])) {
+                if (!$obj) continue;
+
+                $choice = $obj["choices"][0] ?? null;
+                if (!$choice) continue;
+
+                if (!empty($choice["finish_reason"])) {
+                    $finishReason = $choice["finish_reason"];
+                }
+
+                $delta = $choice["delta"] ?? [];
+
+                if (!empty($delta["content"])) {
                     $gotAnyContent = true;
-                    $processDelta($obj["choices"][0]["delta"]["content"]);
+                    $processDelta($delta["content"]);
+                }
+
+                if (!empty($delta["tool_calls"]) && is_array($delta["tool_calls"])) {
+                    foreach ($delta["tool_calls"] as $tc) {
+                        $idx = $tc["index"] ?? 0;
+                        if (!isset($toolCallsAccum[$idx])) {
+                            $toolCallsAccum[$idx] = ["id" => "", "name" => "", "arguments" => ""];
+                        }
+                        if (!empty($tc["id"])) $toolCallsAccum[$idx]["id"] = $tc["id"];
+                        if (!empty($tc["function"]["name"])) $toolCallsAccum[$idx]["name"] = $tc["function"]["name"];
+                        if (isset($tc["function"]["arguments"])) $toolCallsAccum[$idx]["arguments"] .= $tc["function"]["arguments"];
+                    }
                 }
             }
             return strlen($data);
         };
+
+        $payload = [
+            "model" => $model,
+            "messages" => $messages,
+            "temperature" => 0.65,
+            "max_tokens" => $maxTokens,
+            "stream" => true
+        ];
+        if ($withTools) {
+            $payload["tools"] = $tools;
+            $payload["tool_choice"] = "auto";
+        }
 
         $ch = curl_init("https://openrouter.ai/api/v1/chat/completions");
         curl_setopt($ch, CURLOPT_POST, true);
@@ -742,13 +995,7 @@ function streamOpenRouterAndSave($apiKey, $contents, $systemInstruction, $userId
             "HTTP-Referer: http://127.1.1.0:8080",
             "X-Title: LEPSA AI"
         ]);
-        curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode([
-            "model" => $model,
-            "messages" => $messages,
-            "temperature" => 0.65,
-            "max_tokens" => $maxTokens,
-            "stream" => true
-        ]));
+        curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($payload));
         curl_setopt($ch, CURLOPT_WRITEFUNCTION, $writeCallback);
         curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
         curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 0);
@@ -758,16 +1005,56 @@ function streamOpenRouterAndSave($apiKey, $contents, $systemInstruction, $userId
         curl_close($ch);
     };
 
-    // Primary: Gemini 2.0 Flash (streaming)
-    $runStream("google/gemini-2.0-flash-exp:free", 1500);
+    // ROUND 1: primary model, tools enabled — AI khud decide karega search karni hai ya nahi
+    $runStream("google/gemini-2.0-flash-exp:free", 1500, true);
 
-    // Kuch bhi nahi mila to fallback model bhi stream karke try karo
-    if (!$gotAnyContent) {
-        $runStream("gemini-2.5-flash", 1200);
+    if (!$gotAnyContent && empty($toolCallsAccum)) {
+        $runStream("gemini-2.5-flash", 1200, true);
     }
 
-    // Agar fir bhi kuch nahi mila
-    if (!$gotAnyContent) {
+    // Agar AI ne search_web call kiya:
+    if ($finishReason === "tool_calls" && !empty($toolCallsAccum)) {
+        foreach ($toolCallsAccum as $tc) {
+            if (($tc["name"] ?? "") === "search_web" && !empty($tc["arguments"])) {
+                $args = json_decode($tc["arguments"], true);
+                $query = trim($args["query"] ?? "");
+                if ($query === "") continue;
+
+                $emitStatus("🔍 Searching: " . $query);
+                $webData = fetchWebResults($query);
+                if (!empty($webData["sources"])) {
+                    $searchSources = array_merge($searchSources, $webData["sources"]);
+                }
+
+                $messages[] = [
+                    "role" => "assistant",
+                    "content" => null,
+                    "tool_calls" => [[
+                        "id" => $tc["id"] ?: ("call_" . uniqid()),
+                        "type" => "function",
+                        "function" => ["name" => "search_web", "arguments" => $tc["arguments"]]
+                    ]]
+                ];
+                $messages[] = [
+                    "role" => "tool",
+                    "tool_call_id" => $tc["id"] ?: ("call_" . uniqid()),
+                    "content" => $webData["context"] !== "" ? $webData["context"] : "No relevant results found for this query."
+                ];
+            }
+        }
+
+        // ROUND 2: search result ke saath final answer — ab tools nahi (loop se bachne ke liye)
+        $toolCallsAccum = [];
+        $finishReason = null;
+        $gotAnyContent = false;
+        $runStream("google/gemini-2.0-flash-exp:free", 1500, false);
+
+        if (!$gotAnyContent) {
+            $runStream("gemini-2.5-flash", 1200, false);
+        }
+    }
+
+    if (!$gotAnyContent && $fullReply === "") {
         $errMsg = "⚠️ AI service temporarily unavailable.";
         $emit($errMsg);
         $fullReply = $errMsg;

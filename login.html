@@ -9,7 +9,6 @@
 >
  
  <script src="https://accounts.google.com/gsi/client" async defer></script>
- 
 
 <title>Login — LEPSA AI</title>
 
@@ -1197,6 +1196,16 @@ body::after {
 
                  
 
+                    <button
+    type="button"
+    class="social-btn"
+    id="facebookLoginBtn"
+    onclick="triggerFacebookLogin()"
+>
+    <span class="social-icon" style="color:#1877F2;">f</span>
+    Continue with Facebook
+</button>
+
 
                     <button
                         type="button"
@@ -1386,7 +1395,76 @@ body::after {
 <script>
     
     // APNI GOOGLE CLIENT ID YAHAN PASTE KAREIN
-const GOOGLE_CLIENT_ID = "PASTE_YOUR_GOOGLE_CLIENT_ID_HERE.apps.googleusercontent.com";
+const GOOGLE_CLIENT_ID = "176255488760-tsbivrir1dmee2lrpkuc15ce0c8afapi.apps.googleusercontent.com";
+
+// APNI FACEBOOK APP ID YAHAN PASTE KAREIN (developers.facebook.com se)
+const FACEBOOK_APP_ID = "PASTE_YOUR_FACEBOOK_APP_ID_HERE";
+
+window.fbAsyncInit = function () {
+    FB.init({
+        appId: FACEBOOK_APP_ID,
+        cookie: true,
+        xfbml: false,
+        version: "v19.0"
+    });
+};
+
+(function (d, s, id) {
+    var js, fjs = d.getElementsByTagName(s)[0];
+    if (d.getElementById(id)) return;
+    js = d.createElement(s); js.id = id;
+    js.src = "https://connect.facebook.net/en_US/sdk.js";
+    fjs.parentNode.insertBefore(js, fjs);
+}(document, "script", "facebook-jssdk"));
+
+function triggerFacebookLogin() {
+    if (!window.FB) {
+        alert("Facebook services load nahi hui, internet check karein.");
+        return;
+    }
+    FB.login(function (response) {
+        if (response.authResponse) {
+            handleFacebookAuthResponse(response.authResponse.accessToken);
+        }
+    }, { scope: "public_profile,email" });
+}
+
+async function handleFacebookAuthResponse(accessToken) {
+    const message = document.getElementById("message");
+    message.textContent = "Verifying with Facebook...";
+    message.style.color = "#00e5ff";
+
+    try {
+        const res = await fetch("auth.php", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                action: "social_login",
+                provider: "facebook",
+                token: accessToken
+            })
+        });
+
+        const data = await res.json();
+
+        if (data.success) {
+            sessionStorage.setItem("lepsaLoggedIn", "true");
+            sessionStorage.setItem("lepsaUserName", data.user.name);
+            sessionStorage.setItem("lepsaUserEmail", data.user.email);
+
+            message.textContent = "Facebook Login successful!";
+            setTimeout(() => {
+                window.location.href = "index.html";
+            }, 600);
+        } else {
+            message.textContent = data.message || "Facebook login failed.";
+            message.style.color = "#ff6878";
+        }
+    } catch (err) {
+        message.textContent = "Network error during Facebook login.";
+        message.style.color = "#ff6878";
+    }
+}
 
 window.onload = function () {
     if (window.google) {
