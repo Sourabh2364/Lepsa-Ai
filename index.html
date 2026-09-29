@@ -7,6 +7,11 @@
     <title>LEPSA AI</title>
     <link rel="stylesheet" href="style.css?v=6">
 
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#05070d">
+    <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
+    <link rel="apple-touch-icon" href="apple-touch-icon.png">
+
     <script>
         // Check login status before loading UI
         (function () {
@@ -74,6 +79,15 @@
                 </button>
             </div>
         </div>
+
+        <!-- INSTALL APP (sirf tab dikhega jab browser install-ready mane) -->
+        <button type="button" id="lepsaInstallBtn" class="menu-item" onclick="triggerAppInstall()">
+            <div class="menu-icon-box">📲</div>
+            <div>
+                <div class="menu-item-title">Install App</div>
+                <div style="font-size:11px; color:#6b8894;">Home screen pe add karo</div>
+            </div>
+        </button>
 
         <!-- CHAT HISTORY -->
         <div class="menu-title">Chats</div>
@@ -151,7 +165,7 @@
                 <div class="lepsa-dropdown" id="lepsaDropdown">
                     <button class="lepsa-menu-item" onclick="newChat()" type="button">✨ New Chat</button>
                     <button class="lepsa-menu-item" id="lepsaShareBtn" type="button" onclick="navigator.clipboard.writeText(window.location.href); lepsaToast('Link Copied!');">↗ Share</button>
-                    <button class="lepsa-menu-item" id="lepsaInstallBtn" type="button">⌂ Add to home</button>
+                    <button class="lepsa-menu-item" id="lepsaInstallBtnDropdown" type="button" onclick="triggerAppInstall()">⌂ Add to home</button>
                 </div>
             </div>
         </div>
@@ -491,7 +505,52 @@ async function logoutDemo() {
 }
 </script>
 
-<script src="script.js"></script>
+<script src="script.js" defer></script>
+
+<script>
+    // Service Worker register karna PWA install-ability ke liye zaroori hai
+    if ("serviceWorker" in navigator) {
+        window.addEventListener("load", function () {
+            navigator.serviceWorker.register("sw.js")
+                .then(function (reg) {
+                    console.log("Service worker registered:", reg.scope);
+                })
+                .catch(function (err) {
+                    console.warn("Service worker registration failed:", err);
+                });
+        });
+    }
+
+    // ---- CUSTOM INSTALL BUTTON ----
+    // Browser ye event tab hi fire karta hai jab manifest+SW+HTTPS(ya localhost)
+    // sab conditions poori ho jaayein — matlab button sirf tabhi dikhega jab
+    // install genuinely possible ho.
+    let deferredInstallPrompt = null;
+
+    window.addEventListener("beforeinstallprompt", function (event) {
+        event.preventDefault();
+        deferredInstallPrompt = event;
+        console.log("App install-ready hai.");
+    });
+
+    window.triggerAppInstall = function () {
+        if (deferredInstallPrompt) {
+            deferredInstallPrompt.prompt();
+            deferredInstallPrompt.userChoice.then(function (choice) {
+                console.log("User ne choose kiya:", choice.outcome);
+                deferredInstallPrompt = null;
+            });
+        } else {
+            alert("Ye app pehle se install ho sakti hai, ya browser ye direct install support nahi karta. Chrome ke 3-dot menu me 'Add to Home screen' try karo.");
+        }
+    };
+
+    window.addEventListener("appinstalled", function () {
+        console.log("App install ho gayi.");
+    });
+</script>
+
+
 
     <!-- CUSTOM CONFIRM MODAL (replaces native browser confirm()) -->
     <div id="lepsaConfirmOverlay" class="lepsa-confirm-overlay" style="display:none;">

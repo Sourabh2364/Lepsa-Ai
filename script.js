@@ -116,7 +116,7 @@ async function sendMessage() {
     const messages = document.getElementById("messages");
     const botDiv = document.createElement("div");
     botDiv.className = "message bot";
-    botDiv.innerHTML = '<span class="typing-cursor">●</span>';
+    botDiv.innerHTML = '<div class="thinking-indicator"><span></span><span></span><span></span></div>';
     messages.appendChild(botDiv);
     messages.scrollTop = messages.scrollHeight;
 

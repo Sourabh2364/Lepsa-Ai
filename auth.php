@@ -29,15 +29,19 @@ register_shutdown_function(function () {
 // DATABASE
 // =====================================================
 
-$dbFile = __DIR__ . "/lepsa_users.sqlite";
+require_once __DIR__ . "/config.php";
+require_once __DIR__ . "/turso_db.php";
+
+$tursoUrl = defined('TURSO_DATABASE_URL') ? TURSO_DATABASE_URL : "";
+$tursoToken = defined('TURSO_AUTH_TOKEN') ? TURSO_AUTH_TOKEN : "";
 
 try {
 
-    if (!class_exists("SQLite3")) {
-        throw new Exception("SQLite3 PHP extension is not enabled on this server.");
+    if ($tursoUrl === "" || $tursoToken === "" || strpos($tursoUrl, "PASTE_YOUR") === 0) {
+        throw new Exception("Turso database credentials config.php me set nahi hain.");
     }
 
-    $db = new SQLite3($dbFile);
+    $db = new TursoDB($tursoUrl, $tursoToken);
 
     $db->exec("
         CREATE TABLE IF NOT EXISTS users (

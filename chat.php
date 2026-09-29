@@ -11,9 +11,12 @@ if ($_SERVER["REQUEST_METHOD"] === "OPTIONS") {
 }
 
 require_once __DIR__ . "/config.php";
+require_once __DIR__ . "/turso_db.php";
 
 $openRouterKey = defined('OPENROUTER_API_KEY') ? OPENROUTER_API_KEY : "";
 $elevenLabsKey = defined('ELEVENLABS_API_KEY') ? ELEVENLABS_API_KEY : "";
+$tursoUrl = defined('TURSO_DATABASE_URL') ? TURSO_DATABASE_URL : "";
+$tursoToken = defined('TURSO_AUTH_TOKEN') ? TURSO_AUTH_TOKEN : "";
 
 // =====================================================
 // CRASH-PROOF SESSION & USER CREDIT CHECK
@@ -24,13 +27,12 @@ if (session_status() === PHP_SESSION_NONE) {
 }
 $userId = $_SESSION["user_id"] ?? null;
 
-$dbFile = __DIR__ . "/lepsa_users.sqlite";
 $db = null;
 $memoryFacts = [];
 
-if ($userId && file_exists($dbFile)) {
+if ($userId && $tursoUrl && $tursoToken) {
     try {
-        $db = new SQLite3($dbFile);
+        $db = new TursoDB($tursoUrl, $tursoToken);
         $stmt = @$db->prepare("SELECT credits, tier FROM users WHERE id = :id LIMIT 1");
         if ($stmt) {
             $stmt->bindValue(":id", $userId, SQLITE3_INTEGER);
@@ -87,6 +89,13 @@ if ($userId && file_exists($dbFile)) {
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             )
         ");
+
+        // ---- PERFORMANCE: indexes on lookup columns (chats/memory grow karne
+        // par bhi queries fast rahein, full-table-scan na ho) ----
+        $db->exec("CREATE INDEX IF NOT EXISTS idx_memories_user ON memories(user_id)");
+        $db->exec("CREATE INDEX IF NOT EXISTS idx_conversations_user ON conversations(user_id, updated_at)");
+        $db->exec("CREATE INDEX IF NOT EXISTS idx_chatmsg_conv ON chat_messages(conversation_id, id)");
+        $db->exec("CREATE INDEX IF NOT EXISTS idx_documents_conv ON documents(conversation_id)");
 
         // ---- MEMORY: is user ki purani saved facts load karo ----
         $memStmt = @$db->prepare("SELECT fact FROM memories WHERE user_id = :id ORDER BY id DESC LIMIT 40");

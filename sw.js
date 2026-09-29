@@ -1,4 +1,4 @@
-const CACHE_NAME = "lepsa-ai-v1";
+const CACHE_NAME = "lepsa-ai-v2";
 
 const FILES_TO_CACHE = [
     "./",
@@ -37,7 +37,15 @@ self.addEventListener(
     function (event) {
 
         event.waitUntil(
-            self.clients.claim()
+            caches.keys().then(function (cacheNames) {
+                return Promise.all(
+                    cacheNames
+                        .filter(function (name) { return name !== CACHE_NAME; })
+                        .map(function (name) { return caches.delete(name); })
+                );
+            }).then(function () {
+                return self.clients.claim();
+            })
         );
 
     }
