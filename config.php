@@ -18,3 +18,8 @@ $elevenLabs = getenv('ELEVENLABS_API_KEY') ?: 'YOUR_ELEVENLABS_API_KEY_HERE';
 define('OPENROUTER_API_KEY', $openRouter);
 define('GEMINI_API_KEY', $gemini);
 define('ELEVENLABS_API_KEY', $elevenLabs);
+
+// Turso Database Credentials
+define('TURSO_DATABASE_URL', getenv('TURSO_DATABASE_URL') ?: 'YOUR_TURSO_DATABASE_URL');
+define('TURSO_AUTH_TOKEN', getenv('TURSO_AUTH_TOKEN') ?: 'YOUR_TURSO_AUTH_TOKEN');
+?>
