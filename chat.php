@@ -131,32 +131,109 @@ if (!is_array($input)) {
 }
 
 /* =====================================================
-   TTS HANDLER (ELEVENLABS TURBO + GOOGLE FALLBACK)
+   TTS HANDLER (ELEVENLABS + GOOGLE FALLBACK) — multi voice
 ===================================================== */
+
+function lepsaElevenErr($body, $code, $curlErr) {
+    if ($curlErr) return "curl: " . $curlErr;
+    $j = json_decode((string)$body, true);
+    if (is_array($j)) {
+        $d = $j["detail"] ?? $j["message"] ?? null;
+        if (is_array($d)) $d = $d["message"] ?? $d["status"] ?? json_encode($d);
+        if ($d) return "HTTP {$code}: " . $d;
+    }
+    return "HTTP {$code}";
+}
+
+if (($input["action"] ?? "") === "list_voices") {
+    $voices = [];
+    $err = null;
+    if (!empty($elevenLabsKey)) {
+        $ch = curl_init("https://api.elevenlabs.io/v1/voices");
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 0);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 15);
+        curl_setopt($ch, CURLOPT_HTTPHEADER, ["xi-api-key: " . trim($elevenLabsKey)]);
+        $res = curl_exec($ch);
+        $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $cerr = curl_error($ch);
+        curl_close($ch);
+        $d = json_decode((string)$res, true);
+        if ($code === 200 && !empty($d["voices"])) {
+            foreach ($d["voices"] as $v) {
+                $lb = $v["labels"] ?? [];
+                $voices[] = [
+                    "id" => $v["voice_id"] ?? "",
+                    "name" => $v["name"] ?? "Voice",
+                    "category" => $v["category"] ?? "",
+                    "gender" => $lb["gender"] ?? "",
+                    "accent" => $lb["accent"] ?? "",
+                    "age" => $lb["age"] ?? "",
+                    "desc" => $lb["descriptive"] ?? ($lb["description"] ?? ($lb["use_case"] ?? "")),
+                    "preview" => $v["preview_url"] ?? ""
+                ];
+            }
+            usort($voices, function ($a, $b) {
+                $rank = ["cloned" => 0, "generated" => 1, "professional" => 1, "premade" => 2];
+                return ($rank[$a["category"]] ?? 3) <=> ($rank[$b["category"]] ?? 3);
+            });
+        } else {
+            $err = lepsaElevenErr($res, $code, $cerr);
+        }
+    } else {
+        $err = "ELEVENLABS_API_KEY config.php me nahi hai";
+    }
+
+    $fallback = false;
+    if (empty($voices)) {
+        $fallback = true;
+        $voices = [
+            ["id" => "21m00Tcm4TlvDq8ikWAM", "name" => "Rachel", "category" => "premade", "gender" => "female", "accent" => "american", "age" => "young", "desc" => "calm", "preview" => ""],
+            ["id" => "EXAVITQu4vr4xnSDxMaL", "name" => "Bella", "category" => "premade", "gender" => "female", "accent" => "american", "age" => "young", "desc" => "soft", "preview" => ""],
+            ["id" => "MF3mGyEYCl7XYWbV9V6O", "name" => "Elli", "category" => "premade", "gender" => "female", "accent" => "american", "age" => "young", "desc" => "emotional", "preview" => ""],
+            ["id" => "AZnzlk1XvdvUeBnXmlld", "name" => "Domi", "category" => "premade", "gender" => "female", "accent" => "american", "age" => "young", "desc" => "strong", "preview" => ""],
+            ["id" => "pNInz6obpgDQGcFmaJgB", "name" => "Adam", "category" => "premade", "gender" => "male", "accent" => "american", "age" => "middle aged", "desc" => "deep", "preview" => ""],
+            ["id" => "ErXwobaYiN019PkySvjV", "name" => "Antoni", "category" => "premade", "gender" => "male", "accent" => "american", "age" => "young", "desc" => "well-rounded", "preview" => ""],
+            ["id" => "TxGEqnHWrfWFTfGW9XjX", "name" => "Josh", "category" => "premade", "gender" => "male", "accent" => "american", "age" => "young", "desc" => "deep", "preview" => ""],
+            ["id" => "VR6AewLTigWG4xSOukaG", "name" => "Arnold", "category" => "premade", "gender" => "male", "accent" => "american", "age" => "middle aged", "desc" => "crisp", "preview" => ""],
+            ["id" => "yoZ06aMxZJJ28mfd3POQ", "name" => "Sam", "category" => "premade", "gender" => "male", "accent" => "american", "age" => "young", "desc" => "raspy", "preview" => ""],
+        ];
+    }
+    echo json_encode(["success" => true, "voices" => array_slice($voices, 0, 40), "fallback" => $fallback, "error" => $err], JSON_UNESCAPED_UNICODE);
+    exit;
+}
 
 if (($input["action"] ?? "") === "tts") {
     $ttsText = trim($input["text"] ?? "");
-    $ttsText = mb_substr($ttsText, 0, 250, "UTF-8");
+    $ttsText = mb_substr($ttsText, 0, 600, "UTF-8");
 
     if ($ttsText === "") {
         echo json_encode(["success" => false, "error" => "Text is empty."]);
         exit;
     }
 
+    $voiceId = trim((string)($input["voice_id"] ?? ""));
+    if (!preg_match('/^[A-Za-z0-9]{10,40}$/', $voiceId)) $voiceId = "21m00Tcm4TlvDq8ikWAM";
+    $speed = max(0.7, min(1.2, (float)($input["speed"] ?? 1.0)));
+    $stability = max(0.0, min(1.0, (float)($input["stability"] ?? 0.45)));
+    $model = (string)($input["model"] ?? "eleven_turbo_v2_5");
+    if (!in_array($model, ["eleven_turbo_v2_5", "eleven_multilingual_v2", "eleven_flash_v2_5"], true)) $model = "eleven_turbo_v2_5";
+
     $elevenError = null;
 
     if (!empty($elevenLabsKey)) {
-        $voiceId = "21m00Tcm4TlvDq8ikWAM"; // Rachel Multilingual
-        $url = "https://api.elevenlabs.io/v1/text-to-speech/" . $voiceId . "?optimize_streaming_latency=4";
+        $url = "https://api.elevenlabs.io/v1/text-to-speech/" . $voiceId . "?output_format=mp3_44100_64";
 
         $payload = json_encode([
             "text" => $ttsText,
-            "model_id" => "eleven_turbo_v2_5",
+            "model_id" => $model,
             "voice_settings" => [
-                "stability" => 0.45,
+                "stability" => $stability,
                 "similarity_boost" => 0.8,
                 "style" => 0.0,
-                "use_speaker_boost" => true
+                "use_speaker_boost" => true,
+                "speed" => $speed
             ]
         ]);
 
@@ -169,39 +246,38 @@ if (($input["action"] ?? "") === "tts") {
         ]);
         curl_setopt($ch, CURLOPT_POSTFIELDS, $payload);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-        curl_setopt($ch, CURLOPT_BINARYTRANSFER, true);
         curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
         curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 0);
-        curl_setopt($ch, CURLOPT_TIMEOUT, 15);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 25);
 
         $audioData = curl_exec($ch);
-        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $httpCode = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $ctype = (string)curl_getinfo($ch, CURLINFO_CONTENT_TYPE);
         $curlErr = curl_error($ch);
         curl_close($ch);
 
-        if ($httpCode === 200 && !empty($audioData) && strpos($audioData, "{") !== 0) {
+        if ($httpCode === 200 && !empty($audioData) && stripos($ctype, "audio") === 0) {
             echo json_encode([
                 "success" => true,
                 "audio" => base64_encode($audioData),
                 "mimeType" => "audio/mpeg",
-                "engine" => "elevenlabs"
+                "engine" => "elevenlabs",
+                "voice_id" => $voiceId
             ]);
             exit;
         }
 
-        $errResponse = json_decode($audioData, true);
-        $detail = $errResponse["detail"]["message"] ?? $errResponse["detail"] ?? $curlErr ?? ("HTTP Code: " . $httpCode);
-        $elevenError = is_array($detail) ? json_encode($detail) : $detail;
+        $elevenError = lepsaElevenErr($audioData, $httpCode, $curlErr);
+        error_log("[tts] ElevenLabs failed: " . $elevenError);
     } else {
         $elevenError = "ELEVENLABS_API_KEY missing in config.php";
     }
 
-    // Google TTS Fallback
+    // Google TTS Fallback (robotic — sirf emergency ke liye)
     $gUrl = "https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=hi&q=" . urlencode(mb_substr($ttsText, 0, 200, "UTF-8"));
 
     $ch = curl_init($gUrl);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_BINARYTRANSFER, true);
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
     curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 0);
     curl_setopt($ch, CURLOPT_TIMEOUT, 12);
@@ -210,7 +286,7 @@ if (($input["action"] ?? "") === "tts") {
         "Referer: https://translate.google.com/"
     ]);
     $gAudio = curl_exec($ch);
-    $gHttpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $gHttpCode = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
     $gCurlErr = curl_error($ch);
     curl_close($ch);
 
@@ -220,14 +296,45 @@ if (($input["action"] ?? "") === "tts") {
             "audio" => base64_encode($gAudio),
             "mimeType" => "audio/mpeg",
             "engine" => "google_fallback",
-            "debug_eleven_error" => $elevenError
+            "eleven_error" => $elevenError
         ]);
     } else {
         echo json_encode([
             "success" => false,
-            "error" => "TTS Failed. ElevenLabs Error: " . $elevenError . " | Google: " . $gCurlErr
+            "eleven_error" => $elevenError,
+            "error" => "TTS Failed. ElevenLabs: " . $elevenError . " | Google: " . $gCurlErr
         ]);
     }
+    exit;
+}
+
+/* =====================================================
+   ACCOUNT STATS (profile page ke numbers)
+===================================================== */
+
+if (($input["action"] ?? "") === "account_stats") {
+    $out = ["success" => true, "chats" => 0, "memories" => 0, "images" => 0];
+    if ($userId && $db) {
+        $one = function ($sql) use ($db, $userId) {
+            $st = @$db->prepare($sql);
+            if (!$st) return 0;
+            $st->bindValue(":uid", $userId, SQLITE3_INTEGER);
+            $r = @$st->execute();
+            $row = $r ? $r->fetchArray(SQLITE3_ASSOC) : null;
+            return (int)($row["n"] ?? 0);
+        };
+        $out["chats"] = $one("SELECT COUNT(*) AS n FROM conversations WHERE user_id = :uid");
+        $out["memories"] = $one("SELECT COUNT(*) AS n FROM memories WHERE user_id = :uid");
+        $st = @$db->prepare("SELECT m.content FROM chat_messages m JOIN conversations c ON c.id = m.conversation_id WHERE c.user_id = :uid AND m.role = 'assistant' AND m.content LIKE '%[[IMG:%' LIMIT 500");
+        if ($st) {
+            $st->bindValue(":uid", $userId, SQLITE3_INTEGER);
+            $r = @$st->execute();
+            while ($r && ($row = $r->fetchArray(SQLITE3_ASSOC))) {
+                $out["images"] += preg_match_all('/\[\[IMG:/', $row["content"]);
+            }
+        }
+    }
+    echo json_encode($out);
     exit;
 }
 
@@ -304,6 +411,28 @@ if (($input["action"] ?? "") === "get_conversation") {
         }
     }
     echo json_encode(["success" => true, "messages" => $msgs]);
+    exit;
+}
+
+if (($input["action"] ?? "") === "get_generated_images") {
+    $imgs = [];
+    if ($userId && $db) {
+        $stmt = @$db->prepare("SELECT m.content, m.created_at FROM chat_messages m JOIN conversations c ON c.id = m.conversation_id WHERE c.user_id = :uid AND m.role = 'assistant' AND m.content LIKE '%[[IMG:%' ORDER BY m.id DESC LIMIT 60");
+        if ($stmt) {
+            $stmt->bindValue(":uid", $userId, SQLITE3_INTEGER);
+            $res = $stmt->execute();
+            if ($res) {
+                while ($row = $res->fetchArray(SQLITE3_ASSOC)) {
+                    if (preg_match_all('/\[\[IMG:([^|\]]*)\|([^\]]*)\]\]/u', $row["content"], $mm, PREG_SET_ORDER)) {
+                        foreach ($mm as $x) {
+                            $imgs[] = ["url" => $x[1], "title" => $x[2], "date" => $row["created_at"] ?? ""];
+                        }
+                    }
+                }
+            }
+        }
+    }
+    echo json_encode(["success" => true, "images" => $imgs]);
     exit;
 }
 
@@ -489,6 +618,7 @@ $appMode = trim($input["app_mode"] ?? "code");
 $isVoiceMode = ($input["mode"] ?? "") === "voice";
 
 $systemInstruction = "
+IMAGE RULES: To make an image you MUST call the generate_image tool, exactly ONCE per request, unless the user clearly asks for several images. NEVER write text like [Generated image: ...] or describe an image you did not generate with the tool. Past images in the chat are not shown to you as text, so always call the tool again for every new image request.
 You are LEPSA AI, a cutting-edge, elite AI assistant created and owned by Saurav.
 
 STRICT LANGUAGE MATCHING RULES:
@@ -521,6 +651,24 @@ if ($isVoiceMode) {
 }
 
 /* =====================================================
+   USER PREFERENCES: nickname / tone / custom instructions / plugins
+===================================================== */
+$lepsaPlugins = is_array($input["plugins"] ?? null) ? $input["plugins"] : [];
+$prefNick = trim(mb_substr((string)($input["nickname"] ?? ""), 0, 40, "UTF-8"));
+$prefTone = (string)($input["tone"] ?? "balanced");
+$prefInstr = trim(mb_substr((string)($input["custom_instructions"] ?? ""), 0, 700, "UTF-8"));
+$toneMap = [
+    "friendly" => "Warm, friendly and encouraging; light conversational tone.",
+    "professional" => "Polished, formal and professional.",
+    "concise" => "Extremely concise — shortest useful answer, no filler.",
+    "detailed" => "Thorough and detailed with step-by-step explanations and examples."
+];
+if ($prefNick !== "") $systemInstruction .= "\n\nUSER PREFERENCE: Address the user as \"" . str_replace('"', "", $prefNick) . "\" when natural.";
+if (isset($toneMap[$prefTone])) $systemInstruction .= "\nUSER PREFERENCE (tone): " . $toneMap[$prefTone];
+if ($prefInstr !== "") $systemInstruction .= "\nUSER CUSTOM INSTRUCTIONS (follow unless unsafe): " . $prefInstr;
+if (isset($lepsaPlugins["image"]) && !$lepsaPlugins["image"]) $systemInstruction .= "\nImage generation is switched OFF by the user in Plugins; if they ask for an image, say they can enable it in Account > Plugins.";
+
+/* =====================================================
    MEMORY: purani saved facts context me do + naye facts
    save karne ka tareeka batao
 ===================================================== */
@@ -542,6 +690,78 @@ Only do this for genuinely new, important, durable facts. Do NOT do this for cas
 /* =====================================================
    REAL-TIME SEARCH ENGINE (DuckDuckGo API)
 ===================================================== */
+
+function safeCalculate($expr) {
+    $expr = trim($expr);
+    // Sirf numbers, operators, parentheses, decimal point, spaces allow karo —
+    // isse eval() safe ban jaata hai (koi letters/function-calls possible nahi).
+    if ($expr === "" || !preg_match('/^[0-9+\-*\/().\s]+$/', $expr)) {
+        return "Invalid expression — sirf numbers aur + - * / ( ) allowed hain.";
+    }
+    try {
+        $result = @eval("return ($expr);");
+        if ($result === false || !is_numeric($result)) {
+            return "Ye expression evaluate nahi ho payi.";
+        }
+        return (string)$result;
+    } catch (Throwable $e) {
+        return "Math error: " . $e->getMessage();
+    }
+}
+
+function generateImageUrl($prompt, &$errorMsg = null) {
+    // Pollinations (gen.pollinations.ai) ab API key maangta hai.
+    // Key server par hi rehti hai (Authorization header) — browser ko nahi dikhti.
+    // Image server par download hoke /generated_images/ me save hoti hai.
+    $apiKey = defined('POLLINATIONS_API_KEY') ? trim(POLLINATIONS_API_KEY) : "";
+    if ($apiKey === "" || strpos($apiKey, "PASTE_YOUR") === 0) {
+        $errorMsg = "POLLINATIONS_API_KEY config.php me set nahi hai.";
+        return null;
+    }
+
+    $dir = __DIR__ . "/generated_images";
+    if (!is_dir($dir) && !@mkdir($dir, 0755, true)) {
+        $errorMsg = "generated_images folder nahi ban pa raha (permission check karo).";
+        return null;
+    }
+
+    $cleanPrompt = rawurlencode(mb_substr(trim($prompt), 0, 800));
+    $seed = random_int(1, 999999);
+    $url = "https://gen.pollinations.ai/image/{$cleanPrompt}?width=1024&height=1024&seed={$seed}";
+
+    $ch = curl_init($url);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 120);
+    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 15);
+    // Local PHP (127.0.0.1) me CA certificates aksar nahi hote — baaki curl calls ki tarah yaha bhi off
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 0);
+    curl_setopt($ch, CURLOPT_USERAGENT, "Mozilla/5.0 (LEPSA AI)");
+    curl_setopt($ch, CURLOPT_HTTPHEADER, [
+        "Authorization: Bearer " . $apiKey,
+        "Accept: image/*",
+    ]);
+    $data = curl_exec($ch);
+    $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $type = (string)curl_getinfo($ch, CURLINFO_CONTENT_TYPE);
+    $curlErr = curl_error($ch);
+    curl_close($ch);
+
+    if ($data === false || $code !== 200 || stripos($type, "image/") !== 0) {
+        $errorMsg = "Pollinations error (HTTP {$code}) " . ($curlErr ? "curl: " . $curlErr : mb_substr(trim(strip_tags((string)$data)), 0, 200));
+        error_log("[generateImageUrl] " . $errorMsg);
+        return null;
+    }
+
+    $ext = (stripos($type, "png") !== false) ? "png" : ((stripos($type, "webp") !== false) ? "webp" : "jpg");
+    $name = "img_" . date("Ymd_His") . "_" . bin2hex(random_bytes(4)) . "." . $ext;
+    if (@file_put_contents($dir . "/" . $name, $data) === false) {
+        $errorMsg = "Image save nahi ho payi (folder permission).";
+        return null;
+    }
+    return "generated_images/" . $name;
+}
 
 function fetchWebResults($query) {
     $cleanQuery = urlencode(trim($query));
@@ -732,6 +952,8 @@ if (is_array($history)) {
         $text = trim((string)($item["text"] ?? ""));
         if ($text === "") continue;
 
+        $text = trim(preg_replace(['/\[\[IMG:[^|\]]*\|[^\]]*\]\]/u', '/\[Generated image:[^\]]*\]/iu'], '', $text));
+        if ($text === "") continue;
         $role = in_array(($item["role"] ?? ""), ["model", "bot", "assistant"]) ? "assistant" : "user";
         $contents[] = [
             "role" => $role,
@@ -881,20 +1103,59 @@ function streamOpenRouterAndSave($apiKey, $contents, $systemInstruction, $userId
         $contents
     );
 
-    $tools = [[
-        "type" => "function",
-        "function" => [
-            "name" => "search_web",
-            "description" => "Search the live web for current, up-to-date, or real-time information — news, prices, scores, recent events, release dates, or any fact that may have changed since your training or that you are not confident about. Use whenever the user's question needs fresh information.",
-            "parameters" => [
-                "type" => "object",
-                "properties" => [
-                    "query" => ["type" => "string", "description" => "The search query, in the user's language."]
-                ],
-                "required" => ["query"]
+    $tools = [
+        [
+            "type" => "function",
+            "function" => [
+                "name" => "search_web",
+                "description" => "Search the live web for current, up-to-date, or real-time information — news, prices, scores, recent events, release dates, or any fact that may have changed since your training or that you are not confident about. Use whenever the user's question needs fresh information.",
+                "parameters" => [
+                    "type" => "object",
+                    "properties" => [
+                        "query" => ["type" => "string", "description" => "The search query, in the user's language."]
+                    ],
+                    "required" => ["query"]
+                ]
+            ]
+        ],
+        [
+            "type" => "function",
+            "function" => [
+                "name" => "calculate",
+                "description" => "Evaluate a precise arithmetic expression (numbers, + - * / and parentheses only). Use this instead of doing math in your head whenever exact precision matters.",
+                "parameters" => [
+                    "type" => "object",
+                    "properties" => [
+                        "expression" => ["type" => "string", "description" => "A plain arithmetic expression, e.g. (240 * 12) / 4"]
+                    ],
+                    "required" => ["expression"]
+                ]
+            ]
+        ],
+        [
+            "type" => "function",
+            "function" => [
+                "name" => "generate_image",
+                "description" => "Generate an original image from a text description. Use whenever the user asks you to draw, create, generate, design, or make a picture/image/logo/art/wallpaper of something. Call it exactly ONCE per request (only call it multiple times if the user explicitly asks for several images).",
+                "parameters" => [
+                    "type" => "object",
+                    "properties" => [
+                        "prompt" => ["type" => "string", "description" => "A detailed, vivid visual description of the image to generate, in English, with style/mood/lighting details for best quality."]
+                    ],
+                    "required" => ["prompt"]
+                ]
             ]
         ]
-    ]];
+    ];
+
+    // Plugins: user ne jo band kiye hain wo tools hata do
+    global $lepsaPlugins;
+    $pluginOf = ["search_web" => "web", "calculate" => "calc", "generate_image" => "image"];
+    $tools = array_values(array_filter($tools, function ($t) use ($lepsaPlugins, $pluginOf) {
+        $n = $t["function"]["name"] ?? "";
+        $k = $pluginOf[$n] ?? null;
+        return !($k && isset($lepsaPlugins[$k]) && !$lepsaPlugins[$k]);
+    }));
 
     $fullReply = "";
     $sentText = "";
@@ -915,6 +1176,14 @@ function streamOpenRouterAndSave($apiKey, $contents, $systemInstruction, $userId
         @ob_flush();
         @flush();
     };
+
+    $emitImage = function ($url, $prompt) {
+        echo "data: " . json_encode(["image" => ["url" => $url, "prompt" => $prompt]], JSON_UNESCAPED_UNICODE) . "\n\n";
+        @ob_flush();
+        @flush();
+    };
+
+    $generatedImages = [];
 
     $processDelta = function ($delta) use (&$fullReply, &$sentText, &$memoryTagStarted, $emit) {
         $fullReply .= $delta;
@@ -991,7 +1260,7 @@ function streamOpenRouterAndSave($apiKey, $contents, $systemInstruction, $userId
             "max_tokens" => $maxTokens,
             "stream" => true
         ];
-        if ($withTools) {
+        if ($withTools && !empty($tools)) {
             $payload["tools"] = $tools;
             $payload["tool_choice"] = "auto";
         }
@@ -1014,52 +1283,109 @@ function streamOpenRouterAndSave($apiKey, $contents, $systemInstruction, $userId
         curl_close($ch);
     };
 
-    // ROUND 1: primary model, tools enabled — AI khud decide karega search karni hai ya nahi
-    $runStream("google/gemini-2.0-flash-exp:free", 1500, true);
+    // =====================================================
+    // AGENT LOOP: AI socho -> tool use karo -> result dekho -> phir
+    // socho -> zaroorat ho to aur tool use karo -> jab ready ho tab
+    // final answer do. Max 4 rounds (loop se bachne ke liye bounded hai).
+    // =====================================================
+    $primaryModel = "google/gemini-2.0-flash-exp:free";
+    $fallbackModel = "gemini-2.5-flash";
+    $maxRounds = 4;
+    $round = 0;
+    $gotFinalAnswer = false;
 
-    if (!$gotAnyContent && empty($toolCallsAccum)) {
-        $runStream("gemini-2.5-flash", 1200, true);
-    }
+    while ($round < $maxRounds && !$gotFinalAnswer) {
+        $round++;
 
-    // Agar AI ne search_web call kiya:
-    if ($finishReason === "tool_calls" && !empty($toolCallsAccum)) {
-        foreach ($toolCallsAccum as $tc) {
-            if (($tc["name"] ?? "") === "search_web" && !empty($tc["arguments"])) {
-                $args = json_decode($tc["arguments"], true);
-                $query = trim($args["query"] ?? "");
-                if ($query === "") continue;
+        // Har round ke liye tracking reset karo
+        $toolCallsAccum = [];
+        $finishReason = null;
+        $gotAnyContent = false;
 
-                $emitStatus("🔍 Searching: " . $query);
-                $webData = fetchWebResults($query);
-                if (!empty($webData["sources"])) {
-                    $searchSources = array_merge($searchSources, $webData["sources"]);
+        $runStream($primaryModel, 1500, true);
+
+        if (!$gotAnyContent && empty($toolCallsAccum)) {
+            $runStream($fallbackModel, 1200, true);
+        }
+
+        if ($finishReason === "tool_calls" && !empty($toolCallsAccum)) {
+            // AI ne ek ya zyada tools maange — unhe chalao, result messages me jodo,
+            // aur loop ko AGLE round me chalne do (final answer abhi nahi aaya).
+            foreach ($toolCallsAccum as $tc) {
+                $toolName = $tc["name"] ?? "";
+                $toolCallId = $tc["id"] ?: ("call_" . uniqid());
+                $toolResultText = "No result.";
+
+                if ($toolName === "search_web" && !empty($tc["arguments"])) {
+                    $args = json_decode($tc["arguments"], true);
+                    $query = trim($args["query"] ?? "");
+                    if ($query !== "") {
+                        $emitStatus("🔍 Searching: " . $query);
+                        $webData = fetchWebResults($query);
+                        if (!empty($webData["sources"])) {
+                            $searchSources = array_merge($searchSources, $webData["sources"]);
+                        }
+                        $toolResultText = $webData["context"] !== "" ? $webData["context"] : "No relevant results found for this query.";
+                    }
+                } elseif ($toolName === "calculate" && !empty($tc["arguments"])) {
+                    $args = json_decode($tc["arguments"], true);
+                    $expression = trim($args["expression"] ?? "");
+                    if ($expression !== "") {
+                        $emitStatus("🧮 Calculating: " . $expression);
+                        $toolResultText = safeCalculate($expression);
+                    }
+                } elseif ($toolName === "generate_image" && !empty($tc["arguments"])) {
+                    $args = json_decode($tc["arguments"], true);
+                    $imgPrompt = trim($args["prompt"] ?? "");
+                    $wantsMany = preg_match('/\b(2|3|4|two|three|four|multiple|several|variations?|images|pictures|photos)\b|दो|तीन/iu', (string)$message);
+                    $maxImgs = $wantsMany ? 4 : 1;
+                    if ($imgPrompt !== "" && count($generatedImages) >= $maxImgs) {
+                        $toolResultText = "Already generated the image for this request. Do NOT call generate_image again. Reply with one short sentence.";
+                    } elseif ($imgPrompt !== "") {
+                        $emitStatus("🎨 Generating image: " . $imgPrompt);
+                        $imgErr = null;
+                        $imgUrl = generateImageUrl($imgPrompt, $imgErr);
+                        if ($imgUrl === null) {
+                            $toolResultText = "Image generation FAILED. Exact reason: " . $imgErr . " Tell the user in one short sentence that it failed and quote this exact reason so they can fix it.";
+                        } else {
+                            $emitImage($imgUrl, $imgPrompt);
+                            $generatedImages[] = ["url" => $imgUrl, "prompt" => $imgPrompt];
+                            $toolResultText = "Image generated and already shown to the user in the chat. Do not describe the image contents or repeat the URL — just reply with one short, natural sentence (e.g. confirming what you made or asking if they'd like changes).";
+                        }
+                    }
                 }
 
                 $messages[] = [
                     "role" => "assistant",
                     "content" => null,
                     "tool_calls" => [[
-                        "id" => $tc["id"] ?: ("call_" . uniqid()),
+                        "id" => $toolCallId,
                         "type" => "function",
-                        "function" => ["name" => "search_web", "arguments" => $tc["arguments"]]
+                        "function" => ["name" => $toolName, "arguments" => $tc["arguments"]]
                     ]]
                 ];
                 $messages[] = [
                     "role" => "tool",
-                    "tool_call_id" => $tc["id"] ?: ("call_" . uniqid()),
-                    "content" => $webData["context"] !== "" ? $webData["context"] : "No relevant results found for this query."
+                    "tool_call_id" => $toolCallId,
+                    "content" => $toolResultText
                 ];
             }
+            // Loop agle round me chalega — AI ab in results ke saath aage sochega
+        } else {
+            // Content aa gaya (ya genuinely kuch nahi mila) — ye final answer hai
+            $gotFinalAnswer = true;
         }
+    }
 
-        // ROUND 2: search result ke saath final answer — ab tools nahi (loop se bachne ke liye)
+    // Agar max rounds khatam ho gaye aur phir bhi sirf tool-calls hi aate rahe
+    // (rare edge case), ek aakhri round bina tools ke — AI ko wrap-up karna hi hoga.
+    if (!$gotFinalAnswer) {
         $toolCallsAccum = [];
         $finishReason = null;
         $gotAnyContent = false;
-        $runStream("google/gemini-2.0-flash-exp:free", 1500, false);
-
+        $runStream($primaryModel, 1500, false);
         if (!$gotAnyContent) {
-            $runStream("gemini-2.5-flash", 1200, false);
+            $runStream($fallbackModel, 1200, false);
         }
     }
 
@@ -1095,11 +1421,20 @@ function streamOpenRouterAndSave($apiKey, $contents, $systemInstruction, $userId
         $cleanReply = trim(preg_replace('/\[MEMORY\](.*?)\[\/MEMORY\]/is', '', $fullReply));
     }
 
-    if ($conversationId && $db && $cleanReply !== "") {
+    $cleanReply = trim(preg_replace('/\[Generated image:[^\]]*\]/iu', '', $cleanReply));
+    $historyText = $cleanReply;
+    if (!empty($generatedImages)) {
+        foreach ($generatedImages as $img) {
+            $safeP = trim(preg_replace('/[\|\[\]\r\n]+/u', ' ', $img["prompt"]));
+            $historyText .= "\n[[IMG:" . $img["url"] . "|" . $safeP . "]]";
+        }
+    }
+
+    if ($conversationId && $db && $historyText !== "") {
         $saveBotMsg = @$db->prepare("INSERT INTO chat_messages (conversation_id, role, content) VALUES (:cid, 'assistant', :content)");
         if ($saveBotMsg) {
             $saveBotMsg->bindValue(":cid", $conversationId, SQLITE3_INTEGER);
-            $saveBotMsg->bindValue(":content", $cleanReply, SQLITE3_TEXT);
+            $saveBotMsg->bindValue(":content", $historyText, SQLITE3_TEXT);
             @$saveBotMsg->execute();
         }
     }

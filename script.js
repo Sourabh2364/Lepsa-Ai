@@ -136,6 +136,7 @@ async function sendMessage() {
                 image: currentImage,
                 mimeType: currentMime,
                 app_mode: currentAppMode,
+                ...lepsaChatExtras(),
                 conversation_id: currentConversationId
             })
         });
@@ -155,6 +156,7 @@ async function sendMessage() {
         let gotMeta = false;
         let sources = [];
         let sawFirstDelta = false;
+        let generatedImagesHtml = "";
 
         while (true) {
             const { done, value } = await reader.read();
@@ -174,7 +176,12 @@ async function sendMessage() {
                 try { obj = JSON.parse(payload); } catch (e) { continue; }
 
                 if (obj.status) {
-                    botDiv.innerHTML = '<div class="tool-status-line"><span class="tool-status-dot"></span>' + obj.status + '</div>';
+                    botDiv.innerHTML = generatedImagesHtml + '<div class="tool-status-line"><span class="tool-status-dot"></span>' + obj.status + '</div>';
+                    messages.scrollTop = messages.scrollHeight;
+                } else if (obj.image) {
+                    const safePrompt = (obj.image.prompt || "Generated image").replace(/"/g, "&quot;");
+                    generatedImagesHtml += '<div class="generated-image-wrap"><img src="' + obj.image.url + '" alt="' + safePrompt + '" class="generated-image" onerror="lepsaImgError(this)" onclick="openImageLightbox(this.src)"></div>';
+                    botDiv.innerHTML = generatedImagesHtml + '<div class="tool-status-line"><span class="tool-status-dot"></span>Image ready...</div>';
                     messages.scrollTop = messages.scrollHeight;
                 } else if (obj.meta) {
                     gotMeta = true;
@@ -189,16 +196,16 @@ async function sendMessage() {
                 } else if (obj.delta) {
                     sawFirstDelta = true;
                     liveText += obj.delta;
-                    botDiv.innerHTML = formatAIResponse(liveText) + '<span class="typing-cursor">●</span>';
+                    botDiv.innerHTML = generatedImagesHtml + formatAIResponse(liveText) + '<span class="typing-cursor">●</span>';
                     messages.scrollTop = messages.scrollHeight;
                 }
             }
         }
 
         const finalText = gotMeta ? finalCleanReply : liveText;
-        if (finalText) {
-            chatHistory.push({ role: "model", text: finalText, type: "bot" });
-            botDiv.innerHTML = formatAIResponse(finalText);
+        if (finalText || generatedImagesHtml) {
+            if (finalText) chatHistory.push({ role: "model", text: finalText, type: "bot" });
+            botDiv.innerHTML = generatedImagesHtml + (finalText ? formatAIResponse(finalText) : "");
             if (sources && sources.length > 0) {
                 botDiv.appendChild(buildSourcesBlock(sources));
             }
@@ -211,6 +218,20 @@ async function sendMessage() {
     }
     messages.scrollTop = messages.scrollHeight;
 }
+
+window.openImageLightbox = function (src) {
+    let overlay = document.getElementById("lepsaImageLightbox");
+    if (!overlay) {
+        overlay = document.createElement("div");
+        overlay.id = "lepsaImageLightbox";
+        overlay.className = "image-lightbox-overlay";
+        overlay.onclick = function () { overlay.style.display = "none"; };
+        overlay.innerHTML = '<img id="lepsaLightboxImg" src="" alt="">';
+        document.body.appendChild(overlay);
+    }
+    document.getElementById("lepsaLightboxImg").src = src;
+    overlay.style.display = "flex";
+};
 
 function buildSourcesBlock(sources) {
     const wrap = document.createElement("div");
@@ -251,7 +272,8 @@ function addMessage(text, type, typing) {
     if (type === "user") {
         div.textContent = text;
     } else {
-        div.innerHTML = formatAIResponse(text);
+        const parsed = extractImageMarkers(text);
+        div.innerHTML = parsed.imagesHtml + formatAIResponse(parsed.text);
         setupCodeCopyButtons(div);
 
         const actionBar = document.createElement("div");
@@ -321,7 +343,7 @@ function typeOutResponse(element, fullText, callback) {
    TEXT FORMATTING
    ========================================================= */
 function formatAIResponse(text) {
-    let safe = String(text)
+    let safe = String(text).replace(/\[Generated image:[^\]]*\]/gi, "").trim()
         .replace(/&/g, "&amp;")
         .replace(/</g, "&lt;")
         .replace(/>/g, "&gt;");
@@ -436,10 +458,7 @@ window.newChat = function () {
 
     renderSuggestionChips();
 
-    const sidebar = document.getElementById("mainSidebar");
-    const overlay = document.getElementById("sidebarOverlay");
-    if (sidebar) sidebar.classList.remove("open");
-    if (overlay) overlay.classList.remove("open");
+    closeSidebar();
 
     highlightActiveConversation(null);
 };
@@ -581,10 +600,7 @@ async function loadConversation(convId) {
 
         highlightActiveConversation(convId);
 
-        const sidebar = document.getElementById("mainSidebar");
-        const overlay = document.getElementById("sidebarOverlay");
-        if (sidebar) sidebar.classList.remove("open");
-        if (overlay) overlay.classList.remove("open");
+        closeSidebar();
     } catch (e) {}
 }
 
@@ -863,6 +879,7 @@ async function executeVoicePrompt(text) {
                 history: chatHistory.slice(-4),
                 mode: "voice",
                 app_mode: currentAppMode,
+                ...lepsaChatExtras(),
                 conversation_id: currentConversationId
             })
         });
@@ -984,6 +1001,67 @@ window.tapVoiceInterrupt = function () {
         updateVoiceModalStatus("Listening...", "Boliye...");
         setLEPSAStatus("Listening...");
         if (lepsaVoiceActive && !voiceMuted) startLEPSAVoice();
+    }
+};
+
+/* =========================================================
+   MEMORY PANEL
+   ========================================================= */
+window.openMemoryPanel = async function () {
+    const modal = document.getElementById("lepsaMemoryModal");
+    const listEl = document.getElementById("memoryListContainer");
+    if (!modal || !listEl) return;
+
+    modal.style.display = "flex";
+    listEl.innerHTML = '<div class="memory-empty-note">Load ho raha hai...</div>';
+
+    try {
+        const res = await fetch("chat.php", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "list_memory" })
+        });
+        const data = await res.json();
+        const facts = data.memories || [];
+
+        if (facts.length === 0) {
+            listEl.innerHTML = '<div class="memory-empty-note">Abhi kuch yaad nahi hai — jaise jaise baat karoge, Lepsa important cheezein yaad rakhna shuru kar degi.</div>';
+            return;
+        }
+
+        listEl.innerHTML = "";
+        facts.forEach(function (f) {
+            const item = document.createElement("div");
+            item.className = "memory-fact-item";
+            item.textContent = f.fact;
+            listEl.appendChild(item);
+        });
+    } catch (e) {
+        listEl.innerHTML = '<div class="memory-empty-note">Memory load nahi ho payi.</div>';
+    }
+
+    closeSidebar();
+};
+
+window.closeMemoryPanel = function () {
+    const modal = document.getElementById("lepsaMemoryModal");
+    if (modal) modal.style.display = "none";
+};
+
+window.clearAllMemory = async function () {
+    const ok = await lepsaConfirm("Lepsa ki saari memory clear kar du? Ye undo nahi ho sakta.");
+    if (!ok) return;
+
+    try {
+        await fetch("chat.php", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "clear_memory" })
+        });
+        lepsaToast("Memory clear ho gayi.");
+        openMemoryPanel();
+    } catch (e) {
+        lepsaToast("Clear nahi ho paya, try again.");
     }
 };
 
@@ -1127,68 +1205,125 @@ function onSpeechFinished() {
     }
 }
 
+let speakToken = 0;
+let currentAudioResolve = null;
+const LEPSA_DEFAULT_VOICE = "21m00Tcm4TlvDq8ikWAM";
+
+function getVoicePrefs() {
+    let p = {};
+    try { p = JSON.parse(localStorage.getItem("lepsaVoicePrefs") || "{}"); } catch (e) {}
+    return {
+        id: p.id || LEPSA_DEFAULT_VOICE,
+        name: p.name || "Rachel",
+        speed: p.speed || 1.0,
+        stability: (p.stability == null ? 0.45 : p.stability)
+    };
+}
+
+function setVoicePrefs(patch) {
+    const merged = Object.assign(getVoicePrefs(), patch);
+    try { localStorage.setItem("lepsaVoicePrefs", JSON.stringify(merged)); } catch (e) {}
+    if (window.refreshAccountLabels) refreshAccountLabels();
+}
+
+function splitForTTS(text, max) {
+    const parts = text.replace(/\s+/g, " ").match(/[^.!?।\n]+[.!?।]*\s*/g) || [text];
+    const chunks = [];
+    let cur = "";
+    parts.forEach(function (p) {
+        if ((cur + p).length > max && cur) { chunks.push(cur.trim()); cur = p; }
+        else cur += p;
+    });
+    if (cur.trim()) chunks.push(cur.trim());
+    const out = [];
+    chunks.forEach(function (c) {
+        if (c.length > max) { (c.match(new RegExp(".{1," + max + "}", "g")) || [c]).forEach(function (x) { out.push(x); }); }
+        else out.push(c);
+    });
+    return out;
+}
+
+async function ttsRequest(text, extra) {
+    const v = getVoicePrefs();
+    const res = await fetch("chat.php", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(Object.assign({
+            action: "tts", text: text, voice_id: v.id, speed: v.speed, stability: v.stability
+        }, extra || {}))
+    });
+    return await res.json();
+}
+
+function noteTtsResult(data) {
+    window.lepsaTtsStatus = { engine: data.engine || "none", error: data.eleven_error || data.error || null };
+    if (data.engine !== "elevenlabs" && !window._lepsaTtsWarned) {
+        window._lepsaTtsWarned = true;
+        lepsaToast("ElevenLabs nahi chali: " + String(data.eleven_error || data.error || "unknown").slice(0, 110), 6000);
+    }
+}
+
+function playAudioData(data) {
+    return new Promise(function (resolve) {
+        const a = new Audio("data:" + (data.mimeType || "audio/mpeg") + ";base64," + data.audio);
+        currentAudio = a;
+        currentAudioResolve = resolve;
+        a.onended = function () { resolve("ended"); };
+        a.onerror = function () { resolve("error"); };
+        a.play().catch(function () { resolve("blocked"); });
+    });
+}
+
+function speakBrowser(text) {
+    return new Promise(function (resolve) {
+        if (!("speechSynthesis" in window)) { resolve(); return; }
+        window.speechSynthesis.cancel();
+        const u = new SpeechSynthesisUtterance(text);
+        u.lang = "hi-IN";
+        u.onend = u.onerror = function () { resolve(); };
+        window.speechSynthesis.speak(u);
+    });
+}
+
 async function speakNaturalVoice(text) {
     stopCurrentAudio();
+    const token = ++speakToken;
 
-    let cleanText = text
-        .replace(/```[\s\S]*?```/g, '')
-        .replace(/[*#_~`>•-]/g, '')
-        .trim();
+    let cleanText = String(text || "")
+        .replace(/```[\s\S]*?```/g, "")
+        .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+        .replace(/https?:\/\/\S+/g, "")
+        .replace(/[*#_~`>•]/g, "")
+        .trim()
+        .slice(0, 1800);
 
-    if (!cleanText) {
-        onSpeechFinished();
-        return;
-    }
+    if (!cleanText) { onSpeechFinished(); return; }
 
     const orb = document.getElementById("modalVoiceOrb");
-    if (orb) {
-        orb.classList.remove("listening");
-        orb.classList.add("speaking");
-    }
-    // Note: mic yahan automatically start NAHI karte — Android Chrome me bina
-    // tap ke SpeechRecognition start karne se Google ka apna mic overlay khul
-    // jaata hai jo khud hi playback ko interrupt kar deta hai. Iski jagah tap
-    // karke interrupt karo (tapVoiceInterrupt) — wo reliable hai.
+    if (orb) { orb.classList.remove("listening"); orb.classList.add("speaking"); }
+    // Note: mic yahan automatically start NAHI karte (Android Chrome ka mic overlay playback rok deta hai).
+    // Interrupt ke liye tapVoiceInterrupt() use hota hai.
 
-    try {
-        const res = await fetch("chat.php", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                action: "tts",
-                text: cleanText.slice(0, 250)
-            })
-        });
+    const chunks = splitForTTS(cleanText, 380).slice(0, 6);
+    const ask = function (t) { return ttsRequest(t).catch(function (e) { return { success: false, error: String(e) }; }); };
+    let pending = ask(chunks[0]);
 
-        const data = await res.json();
+    for (let i = 0; i < chunks.length; i++) {
+        const data = await pending;
+        if (token !== speakToken) return;
+        if (i + 1 < chunks.length) pending = ask(chunks[i + 1]);   // agla chunk pehle se tayyar
 
-        if (data.success && data.audio) {
-            const audioSrc = `data:${data.mimeType || 'audio/mpeg'};base64,${data.audio}`;
-            currentAudio = new Audio(audioSrc);
+        noteTtsResult(data);
+        let result = "error";
+        if (data.success && data.audio) result = await playAudioData(data);
+        if (token !== speakToken) return;
 
-            currentAudio.onended = function () {
-                onSpeechFinished();
-            };
-
-            currentAudio.onerror = function (e) {
-                console.error("Audio playback failed, switching to fallback:", e);
-                fallbackBrowserTTS(cleanText);
-            };
-
-            try {
-                await currentAudio.play();
-            } catch (playError) {
-                console.warn("Autoplay block issue, using fallback:", playError);
-                fallbackBrowserTTS(cleanText);
-            }
-        } else {
-            console.error("TTS Server Error:", data.error || "No audio returned");
-            fallbackBrowserTTS(cleanText);
+        if (result !== "ended") {
+            await speakBrowser(chunks[i]);
+            if (token !== speakToken) return;
         }
-    } catch (err) {
-        console.error("Fetch TTS request failed:", err);
-        fallbackBrowserTTS(cleanText);
     }
+    if (token === speakToken) onSpeechFinished();
 }
 
 function fallbackBrowserTTS(text) {
@@ -1205,12 +1340,18 @@ function fallbackBrowserTTS(text) {
 }
 
 function stopCurrentAudio() {
+    speakToken++;
     if (currentAudio) {
         try {
             currentAudio.pause();
             currentAudio.currentTime = 0;
         } catch (e) {}
         currentAudio = null;
+    }
+    if (currentAudioResolve) {
+        const r = currentAudioResolve;
+        currentAudioResolve = null;
+        r("stopped");
     }
     if ('speechSynthesis' in window) {
         window.speechSynthesis.cancel();
@@ -1432,16 +1573,11 @@ window.handleImageSelected = function (input) {
     }
 };
 
-window.filterMediaVault = function (filterType, elem) {
+window.filterMediaVault = async function (filterType, elem) {
     document.querySelectorAll(".sidebar .menu-item").forEach(m => m.classList.remove("active"));
     if (elem) elem.classList.add("active");
 
-    const sidebar = document.getElementById("mainSidebar");
-    const overlay = document.getElementById("sidebarOverlay");
-    if (sidebar && sidebar.classList.contains("open")) {
-        sidebar.classList.remove("open");
-        if (overlay) overlay.classList.remove("active");
-    }
+    closeSidebar();
 
     if (filterType === "all") {
         closeMediaVault();
@@ -1458,7 +1594,13 @@ window.filterMediaVault = function (filterType, elem) {
     title.textContent = filterType === "image" ? "Images Vault" : "Videos Vault";
     grid.innerHTML = "";
 
-    const filtered = vaultMediaList.filter(item => item.type === filterType);
+    let filtered = vaultMediaList.filter(item => item.type === filterType);
+    if (filterType === "image") {
+        grid.innerHTML = "";
+        emptyNotice.style.display = "none";
+        const serverImgs = await fetchGeneratedImages();
+        filtered = serverImgs.concat(filtered);
+    }
 
     if (filtered.length === 0) {
         emptyNotice.style.display = "block";
@@ -1468,8 +1610,8 @@ window.filterMediaVault = function (filterType, elem) {
             const card = document.createElement("div");
             card.className = "vault-item-card";
             card.innerHTML = `
-                <img src="${item.url}" alt="${item.title}">
-                <div class="vault-item-name">${item.title}</div>
+                <img src="${item.url}" alt="${escAttr(item.title)}" onclick="openImageLightbox(this.src)">
+                <div class="vault-item-name">${escAttr(item.title)}</div>
             `;
             grid.appendChild(card);
         });
@@ -1483,3 +1625,418 @@ window.closeMediaVault = function () {
     if (modal) modal.style.display = "none";
 };
         
+
+window.lepsaImgError = function (img) {
+    const d = document.createElement("div");
+    d.style.cssText = "color:#ff8a8a;font-size:13px;padding:6px 0";
+    d.textContent = "⚠️ Image load nahi ho payi, dobara try karo.";
+    img.replaceWith(d);
+};
+
+
+/* =====================================================
+   Generated-image persistence helpers
+===================================================== */
+function escAttr(str) {
+    return String(str == null ? "" : str).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+// "[[IMG:url|prompt]]" markers ko images me badalta hai
+function extractImageMarkers(text) {
+    let imagesHtml = "";
+    const clean = String(text || "").replace(/\[\[IMG:([^|\]]*)\|([^\]]*)\]\]/g, function (_, url, prompt) {
+        imagesHtml += '<div class="generated-image-wrap"><img src="' + escAttr(url) + '" alt="' + escAttr(prompt) +
+            '" class="generated-image" onerror="lepsaImgError(this)" onclick="openImageLightbox(this.src)"></div>';
+        return "";
+    }).trim();
+    return { text: clean, imagesHtml: imagesHtml };
+}
+
+async function fetchGeneratedImages() {
+    try {
+        const res = await fetch("chat.php", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "get_generated_images" })
+        });
+        const data = await res.json();
+        return (data.images || []).map(function (i) {
+            return { type: "image", title: i.title || "Generated image", url: i.url, date: i.date || "" };
+        });
+    } catch (e) { return []; }
+}
+
+/* =====================================================
+   Sidebar — ChatGPT jaisa: bahar tap / swipe / Esc se band
+===================================================== */
+window.openSidebar = function () {
+    const sb = document.getElementById("mainSidebar");
+    const ov = document.getElementById("sidebarOverlay");
+    if (sb) sb.classList.add("open");
+    if (ov) ov.classList.add("active");
+};
+window.closeSidebar = function () {
+    const sb = document.getElementById("mainSidebar");
+    const ov = document.getElementById("sidebarOverlay");
+    if (sb) sb.classList.remove("open");
+    if (ov) { ov.classList.remove("active"); ov.classList.remove("open"); }
+};
+window.toggleMobileSidebar = function () {
+    const sb = document.getElementById("mainSidebar");
+    if (sb && sb.classList.contains("open")) closeSidebar(); else openSidebar();
+};
+document.addEventListener("keydown", function (e) { if (e.key === "Escape") closeSidebar(); });
+(function () {
+    let sx = 0, sy = 0, tracking = false;
+    document.addEventListener("touchstart", function (e) {
+        const t = e.touches[0]; sx = t.clientX; sy = t.clientY;
+        const sb = document.getElementById("mainSidebar");
+        tracking = !!(sb && (sb.classList.contains("open") || sx < 20));
+    }, { passive: true });
+    document.addEventListener("touchend", function (e) {
+        if (!tracking) return;
+        const t = e.changedTouches[0], dx = t.clientX - sx, dy = Math.abs(t.clientY - sy);
+        const sb = document.getElementById("mainSidebar");
+        if (!sb || dy > 60 || window.innerWidth > 700) return;
+        if (sb.classList.contains("open") && dx < -60) closeSidebar();
+        else if (!sb.classList.contains("open") && sx < 20 && dx > 70) openSidebar();
+    }, { passive: true });
+})();
+
+/* =====================================================
+   PREFERENCES (personalization + plugins) -> chat requests
+===================================================== */
+function getPrefs() {
+    try { return Object.assign({ nickname: "", tone: "balanced", instructions: "" }, JSON.parse(localStorage.getItem("lepsaPrefs") || "{}")); }
+    catch (e) { return { nickname: "", tone: "balanced", instructions: "" }; }
+}
+function getPlugins() {
+    try { return Object.assign({ web: true, image: true, calc: true }, JSON.parse(localStorage.getItem("lepsaPlugins") || "{}")); }
+    catch (e) { return { web: true, image: true, calc: true }; }
+}
+function lepsaChatExtras() {
+    const p = getPrefs();
+    return { custom_instructions: p.instructions || "", nickname: p.nickname || "", tone: p.tone || "balanced", plugins: getPlugins() };
+}
+
+/* =====================================================
+   BOTTOM SHEET
+===================================================== */
+window.openSheet = function (title, html) {
+    const sheet = document.getElementById("lepsaSheet");
+    const back = document.getElementById("lepsaSheetBack");
+    document.getElementById("lepsaSheetTitle").textContent = title;
+    document.getElementById("lepsaSheetBody").innerHTML = html;
+    document.getElementById("lepsaSheetBody").scrollTop = 0;
+    back.classList.add("show");
+    requestAnimationFrame(function () { sheet.classList.add("show"); });
+};
+window.closeSheet = function () {
+    const sheet = document.getElementById("lepsaSheet");
+    const back = document.getElementById("lepsaSheetBack");
+    if (sheet) sheet.classList.remove("show");
+    if (back) back.classList.remove("show");
+    if (window._vsPreviewAudio) { try { window._vsPreviewAudio.pause(); } catch (e) {} }
+    refreshAccountLabels();
+};
+document.addEventListener("keydown", function (e) { if (e.key === "Escape") closeSheet(); });
+
+/* =====================================================
+   ACCOUNT PAGE v2
+===================================================== */
+const MODE_LABELS = { code: "Dev Core", business: "Voice Agent", study: "Exam Prep" };
+
+window.refreshAccountLabels = function () {
+    const set = function (id, v) { const el = document.getElementById(id); if (el) el.textContent = v; };
+    const tone = getPrefs().tone || "balanced";
+    set("accValTone", tone.charAt(0).toUpperCase() + tone.slice(1));
+    set("accValVoice", getVoicePrefs().name);
+    set("voiceChipName", getVoicePrefs().name);
+    set("accValMode", MODE_LABELS[currentAppMode] || "Dev Core");
+    const pl = getPlugins();
+    set("accValPlugins", [pl.web, pl.image, pl.calc].filter(Boolean).length + " on");
+};
+
+window.refreshAccountStats = async function () {
+    try {
+        const res = await fetch("chat.php", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "account_stats" })
+        });
+        const d = await res.json();
+        const set = function (id, v) { const el = document.getElementById(id); if (el) el.textContent = v; };
+        set("accStatChats", d.chats ?? 0);
+        set("accStatMemory", d.memories ?? 0);
+        set("accStatImages", d.images ?? 0);
+        set("accValMemory", (d.memories ?? 0) + " saved");
+    } catch (e) {}
+};
+
+window.openAccountSettings = function () {
+    const modal = document.getElementById("lepsaAccountModal");
+    if (!modal) return;
+
+    const name = sessionStorage.getItem("lepsaUserName") || "User";
+    const email = sessionStorage.getItem("lepsaUserEmail") || "user@lepsa.ai";
+    const set = function (id, v) { const el = document.getElementById(id); if (el) el.textContent = v; };
+    set("settingsProfileName", name);
+    set("settingsProfileEmail", email);
+    set("settingsEmailField", email);
+    set("settingsProfileAvatar", name.charAt(0).toUpperCase());
+
+    modal.style.display = "flex";
+    refreshAccountLabels();
+    refreshAccountStats();
+};
+
+window.accountAction = async function (name) {
+    if (name === "personalization") return openPersonalizationSheet();
+    if (name === "voice") return openVoiceStudio();
+    if (name === "memory") return openMemoryPanel();
+    if (name === "plugins") return openPluginsSheet();
+    if (name === "workspace") return openWorkspaceSheet();
+    if (name === "plan") return openPlanSheet();
+    if (name === "email") {
+        const email = sessionStorage.getItem("lepsaUserEmail") || "";
+        try { await navigator.clipboard.writeText(email); lepsaToast("Email copy ho gaya ✓"); } catch (e) { lepsaToast(email); }
+        return;
+    }
+    if (name === "clearMemory") {
+        await clearAllMemory();
+        refreshAccountStats();
+        return;
+    }
+    if (name === "resetPrefs") {
+        const ok = await lepsaConfirm("Voice, plugins aur personalization default par reset kar du?");
+        if (!ok) return;
+        ["lepsaPrefs", "lepsaPlugins", "lepsaVoicePrefs"].forEach(function (k) { localStorage.removeItem(k); });
+        refreshAccountLabels();
+        lepsaToast("Preferences reset ho gayi ✓");
+    }
+};
+
+/* ---------- Personalization ---------- */
+const TONES = [["balanced", "Balanced"], ["friendly", "Friendly"], ["professional", "Professional"], ["concise", "Concise"], ["detailed", "Detailed"]];
+let _prefTone = "balanced";
+
+window.openPersonalizationSheet = function () {
+    const p = getPrefs();
+    _prefTone = p.tone || "balanced";
+    const chips = TONES.map(function (t) {
+        return '<div class="sh-chip' + (t[0] === _prefTone ? " on" : "") + '" onclick="prefPickTone(this,\'' + t[0] + '\')">' + t[1] + '</div>';
+    }).join("");
+    openSheet("Personalization",
+        '<div class="sh-label">Nickname</div>' +
+        '<input id="prefNick" class="sh-input" maxlength="40" placeholder="Lepsa aapko kis naam se bulaye?" value="' + escAttr(p.nickname) + '">' +
+        '<div class="sh-label">Reply tone</div><div class="sh-chips">' + chips + '</div>' +
+        '<div class="sh-label">Custom instructions</div>' +
+        '<textarea id="prefInstr" class="sh-textarea" maxlength="700" oninput="document.getElementById(\'prefCount\').textContent=this.value.length" placeholder="Jaise: Hamesha Hinglish me jawab do. Code me comments likho.">' + escAttr(p.instructions) + '</textarea>' +
+        '<div class="sh-count"><span id="prefCount">' + (p.instructions || "").length + '</span>/700</div>' +
+        '<button class="sh-btn" onclick="savePersonalization()">Save</button>');
+};
+window.prefPickTone = function (el, tone) {
+    _prefTone = tone;
+    el.parentNode.querySelectorAll(".sh-chip").forEach(function (c) { c.classList.remove("on"); });
+    el.classList.add("on");
+};
+window.savePersonalization = function () {
+    const p = {
+        nickname: document.getElementById("prefNick").value.trim(),
+        tone: _prefTone,
+        instructions: document.getElementById("prefInstr").value.trim()
+    };
+    try { localStorage.setItem("lepsaPrefs", JSON.stringify(p)); } catch (e) {}
+    closeSheet();
+    lepsaToast("Personalization save ho gayi ✓");
+};
+
+/* ---------- Plugins ---------- */
+window.openPluginsSheet = function () {
+    const pl = getPlugins();
+    const rows = [
+        ["web", "🌐", "ic-cyan", "Web Search", "Live news, scores, prices"],
+        ["image", "🎨", "ic-pink", "Image Generation", "Text se images banao"],
+        ["calc", "🧮", "ic-amber", "Calculator", "Exact maths answers"]
+    ].map(function (r) {
+        return '<div class="sh-toggle-row"><span class="acc-ico ' + r[2] + '">' + r[1] + '</span>' +
+            '<div class="acc-txt"><strong>' + r[3] + '</strong><small>' + r[4] + '</small></div>' +
+            '<div class="sw' + (pl[r[0]] ? " on" : "") + '" onclick="togglePlugin(\'' + r[0] + '\',this)"></div></div>';
+    }).join("");
+    openSheet("Plugins", rows + '<div class="sh-count" style="text-align:left;margin-top:12px">Band karne par AI wo tool use nahi karegi.</div>');
+};
+window.togglePlugin = function (key, el) {
+    const pl = getPlugins();
+    pl[key] = !pl[key];
+    try { localStorage.setItem("lepsaPlugins", JSON.stringify(pl)); } catch (e) {}
+    el.classList.toggle("on", pl[key]);
+    refreshAccountLabels();
+};
+
+/* ---------- Workspace ---------- */
+window.openWorkspaceSheet = function () {
+    const modes = [
+        ["code", "💻", "ic-cyan", "Dev Core", "Coding, bugs, architecture"],
+        ["business", "🎙️", "ic-pink", "Voice Agent", "Business, sales, clients"],
+        ["study", "📚", "ic-green", "Exam Prep", "Notes, concepts, MCQs"]
+    ].map(function (m) {
+        return '<div class="sh-card' + (m[0] === currentAppMode ? " on" : "") + '" onclick="pickWorkspace(\'' + m[0] + '\')">' +
+            '<span class="acc-ico ' + m[2] + '">' + m[1] + '</span>' +
+            '<div class="acc-txt"><strong>' + m[3] + '</strong><small>' + m[4] + '</small></div>' +
+            '<span class="sh-check">' + (m[0] === currentAppMode ? "✓" : "") + '</span></div>';
+    }).join("");
+    openSheet("Workspace", modes);
+};
+window.pickWorkspace = function (mode) {
+    const btn = document.getElementById("modeBtn" + mode.charAt(0).toUpperCase() + mode.slice(1));
+    setAppMode(mode, btn);
+    closeSheet();
+    lepsaToast("Workspace: " + MODE_LABELS[mode]);
+};
+
+/* ---------- Plan ---------- */
+window.openPlanSheet = function () {
+    const feats = ["Unlimited chats & memory", "Live web search", "AI image generation", "ElevenLabs premium voices", "Voice mode with multiple voices", "PDF & image understanding"];
+    openSheet("Your plan",
+        '<div class="acc-hero" style="margin:6px 0 12px;padding:20px 16px">' +
+        '<div class="acc-plan-badge" style="margin:0">✦ LEPSA PRO CORE</div>' +
+        '<div style="margin-top:10px;color:#22e07a;font-weight:700;font-size:14px">● Active</div></div>' +
+        feats.map(function (f) { return '<div class="sh-feature"><b>✓</b><span>' + f + '</span></div>'; }).join(""));
+};
+
+/* =====================================================
+   VOICE STUDIO
+===================================================== */
+let _voiceData = null;
+const VS_GRADS = ["linear-gradient(135deg,#00eaff,#7a5cff)", "linear-gradient(135deg,#ff7ad9,#ffb86b)", "linear-gradient(135deg,#6bffb0,#00c2ff)",
+    "linear-gradient(135deg,#ffd36b,#ff6b8a)", "linear-gradient(135deg,#b58cff,#5cd0ff)"];
+
+function vsGrad(name) {
+    let h = 0;
+    for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
+    return VS_GRADS[h % VS_GRADS.length];
+}
+
+window.openVoiceStudio = async function () {
+    openSheet("Voice Studio", '<div class="vs-status"><span class="vs-dot"></span><div>Voices load ho rahi hain...</div></div>');
+    try {
+        if (!_voiceData) {
+            const res = await fetch("chat.php", {
+                method: "POST", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ action: "list_voices" })
+            });
+            _voiceData = await res.json();
+        }
+    } catch (e) {
+        _voiceData = { voices: [], fallback: true, error: "Server se connect nahi hua" };
+    }
+    renderVoiceStudio();
+};
+
+function renderVoiceStudio() {
+    const d = _voiceData || { voices: [] };
+    const p = getVoicePrefs();
+    const ok = !d.error;
+    const status =
+        '<div class="vs-status ' + (ok ? "ok" : "bad") + '" id="vsStatus"><span class="vs-dot"></span><div>' +
+        (ok ? "<b>ElevenLabs connected</b><small>" + d.voices.length + " voices available</small>"
+            : "<b>ElevenLabs problem</b><small>" + escAttr(d.error) + "</small>") + '</div></div>';
+
+    const styles = [["Stable", 0.7], ["Natural", 0.45], ["Expressive", 0.25]].map(function (s) {
+        return '<div class="sh-chip' + (Math.abs(p.stability - s[1]) < 0.01 ? " on" : "") + '" onclick="vsSetStyle(this,' + s[1] + ')">' + s[0] + '</div>';
+    }).join("");
+
+    const cards = d.voices.map(function (v, i) {
+        const tags = [v.gender, v.accent, v.age, v.desc].filter(Boolean).slice(0, 3)
+            .map(function (t) { return '<span class="vs-tag">' + escAttr(t) + '</span>'; }).join("");
+        return '<div class="sh-card' + (v.id === p.id ? " on" : "") + '" data-i="' + i + '" onclick="vsSelectVoice(' + i + ')">' +
+            '<div class="vs-avatar" style="background:' + vsGrad(v.name) + '">' + escAttr(v.name.charAt(0).toUpperCase()) + '</div>' +
+            '<div class="acc-txt"><strong>' + escAttr(v.name) + '</strong><div class="vs-meta">' + tags + '</div></div>' +
+            '<button class="vs-play" onclick="vsPreview(event,' + i + ')">▶</button>' +
+            '<span class="sh-check">' + (v.id === p.id ? "✓" : "") + '</span></div>';
+    }).join("");
+
+    document.getElementById("lepsaSheetBody").innerHTML =
+        status +
+        '<div class="sh-label">Speed</div><div class="vs-range-row"><input class="vs-range" type="range" min="0.7" max="1.2" step="0.05" value="' + p.speed +
+        '" oninput="vsSetSpeed(this.value)"><b id="vsSpeedVal">' + Number(p.speed).toFixed(2) + 'x</b></div>' +
+        '<div class="sh-label">Style</div><div class="sh-chips">' + styles + '</div>' +
+        '<button class="sh-btn ghost" onclick="vsTest()">🔊 Test current voice</button>' +
+        '<div class="sh-label">Voices</div>' + cards;
+}
+
+window.vsSetSpeed = function (v) {
+    setVoicePrefs({ speed: parseFloat(v) });
+    const el = document.getElementById("vsSpeedVal");
+    if (el) el.textContent = parseFloat(v).toFixed(2) + "x";
+};
+window.vsSetStyle = function (el, val) {
+    setVoicePrefs({ stability: val });
+    el.parentNode.querySelectorAll(".sh-chip").forEach(function (c) { c.classList.remove("on"); });
+    el.classList.add("on");
+};
+
+const VS_SAMPLE = "Namaste! Main Lepsa hoon, aapki AI assistant. Bataiye, main aapki kaise madad kar sakti hoon?";
+
+function vsPlayData(data) {
+    stopCurrentAudio();
+    if (window._vsPreviewAudio) { try { window._vsPreviewAudio.pause(); } catch (e) {} }
+    const a = new Audio("data:" + (data.mimeType || "audio/mpeg") + ";base64," + data.audio);
+    window._vsPreviewAudio = a;
+    return a.play();
+}
+
+async function vsSpeakSample(voiceId, btn) {
+    if (btn) { btn.classList.add("busy"); }
+    const statusEl = document.getElementById("vsStatus");
+    try {
+        const data = await ttsRequest(VS_SAMPLE, voiceId ? { voice_id: voiceId } : {});
+        if (data.success && data.audio) {
+            await vsPlayData(data);
+            if (statusEl) {
+                const good = data.engine === "elevenlabs";
+                statusEl.className = "vs-status " + (good ? "ok" : "bad");
+                statusEl.innerHTML = '<span class="vs-dot"></span><div>' + (good
+                    ? "<b>ElevenLabs working ✓</b><small>Premium voice se play hua</small>"
+                    : "<b>Robotic fallback chala</b><small>" + escAttr(data.eleven_error || "ElevenLabs reply nahi di") + "</small>") + "</div>";
+            }
+        } else if (statusEl) {
+            statusEl.className = "vs-status bad";
+            statusEl.innerHTML = '<span class="vs-dot"></span><div><b>Voice fail</b><small>' + escAttr(data.error || data.eleven_error || "unknown") + "</small></div>";
+        }
+    } catch (e) {
+        lepsaToast("Voice test fail: " + e.message);
+    }
+    if (btn) btn.classList.remove("busy");
+}
+
+window.vsTest = function () { vsSpeakSample(null, null); };
+
+window.vsSelectVoice = function (i) {
+    const v = (_voiceData.voices || [])[i];
+    if (!v) return;
+    setVoicePrefs({ id: v.id, name: v.name });
+    document.querySelectorAll("#lepsaSheetBody .sh-card").forEach(function (c) {
+        const on = parseInt(c.getAttribute("data-i"), 10) === i;
+        c.classList.toggle("on", on);
+        const chk = c.querySelector(".sh-check");
+        if (chk) chk.textContent = on ? "✓" : "";
+    });
+    lepsaToast("Voice: " + v.name);
+};
+
+window.vsPreview = async function (e, i) {
+    e.stopPropagation();
+    const v = (_voiceData.voices || [])[i];
+    if (!v) return;
+    if (v.preview) {
+        stopCurrentAudio();
+        if (window._vsPreviewAudio) { try { window._vsPreviewAudio.pause(); } catch (x) {} }
+        const a = new Audio(v.preview);
+        window._vsPreviewAudio = a;
+        a.play().catch(function () { vsSpeakSample(v.id, e.currentTarget); });
+    } else {
+        vsSpeakSample(v.id, e.currentTarget);
+    }
+};
+
+document.addEventListener("DOMContentLoaded", function () { refreshAccountLabels(); });
