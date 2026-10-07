@@ -1,4 +1,4 @@
-<?php
+hii<?php
 /**
  * LEPSA AI - Configuration Template
  * 
@@ -22,4 +22,7 @@ define('ELEVENLABS_API_KEY', $elevenLabs);
 // Turso Database Credentials
 define('TURSO_DATABASE_URL', getenv('TURSO_DATABASE_URL') ?: 'YOUR_TURSO_DATABASE_URL');
 define('TURSO_AUTH_TOKEN', getenv('TURSO_AUTH_TOKEN') ?: 'YOUR_TURSO_AUTH_TOKEN');
+
+define('POLLINATIONS_API_KEY', $pollination);
+
 ?>
